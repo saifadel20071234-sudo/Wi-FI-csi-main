@@ -1,0 +1,13 @@
+people_count,Samples,Average_Prediction,Average_Rounded,Model_MAE,Baseline_MAE,dataset_file,model
+1,4,2.618,2.75,1.618,2.0,wifi_dataset (2).csv,Combined
+2,54,2.655,2.722,0.655,1.0,wifi_dataset (2).csv,Combined
+3,33,2.971,2.909,0.254,0.0,wifi_dataset (2).csv,Combined
+4,22,2.721,2.591,1.279,1.0,wifi_dataset (2).csv,Combined
+5,2,2.587,2.5,2.413,2.0,wifi_dataset (2).csv,Combined
+2,7,4.606,4.571,2.606,2.0,wifi_dataset (3).csv,Raw
+3,38,4.478,4.553,1.478,1.0,wifi_dataset (3).csv,Raw
+4,68,4.378,4.265,0.389,0.0,wifi_dataset (3).csv,Raw
+5,27,4.659,4.667,0.41,1.0,wifi_dataset (3).csv,Raw
+6,30,4.456,4.467,1.544,2.0,wifi_dataset (3).csv,Raw
+7,4,4.833,4.75,2.167,3.0,wifi_dataset (3).csv,Raw
+8,2,4.24,4.0,3.76,4.0,wifi_dataset (3).csv,Raw

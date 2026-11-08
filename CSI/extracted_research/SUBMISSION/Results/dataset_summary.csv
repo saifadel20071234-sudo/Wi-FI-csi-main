@@ -1,0 +1,3 @@
+dataset_file,rows,people_mean,variance_mean,variance_std,variance_min,variance_max
+wifi_dataset (2).csv,399,2.802,11.144,10.434,0.932,67.832
+wifi_dataset (3).csv,601,4.384,7.433,8.671,0.142,85.669

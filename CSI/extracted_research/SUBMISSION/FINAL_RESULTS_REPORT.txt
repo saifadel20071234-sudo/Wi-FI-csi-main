@@ -1,0 +1,148 @@
+﻿FINAL RESULTS REPORT
+Wi-Fi CSI Human Occupancy Estimation
+Date: November 2026
+
+========================================
+1. PROJECT OBJECTIVE
+========================================
+
+The objective is to estimate the number of people in an indoor environment using ESP32 Wi-Fi CSI measurements.
+
+========================================
+2. DATASET SUMMARY
+========================================
+
+Two ESP32 recordings were used for CSI-based model development:
+
+- wifi_dataset (2).csv: 399 samples.
+- wifi_dataset (3).csv: 601 samples.
+- Total: 1000 samples.
+
+A third recording, wifi_dataset.csv, contains 928 real ESP32 occupancy labels but does not contain CSI measurements. Therefore, it was not used for CSI model training.
+
+The target variable is people_count.
+
+device_count_raw was excluded from model features because it closely matches the target and could cause target leakage.
+
+========================================
+3. DATA PREPROCESSING
+========================================
+
+The work included:
+
+- Data inspection and cleaning.
+- Timestamp analysis.
+- Missing and duplicate timestamp checks.
+- CSI variance analysis.
+- Log transformation of CSI variance.
+- Causal rolling statistics.
+- Lag features.
+- Exponential moving averages.
+- Variance changes and rolling quantiles.
+
+Generated feature files:
+
+- esp32_features_v1.csv
+- esp32_advanced_features.csv
+
+========================================
+4. MODEL EXPERIMENTS
+========================================
+
+The following algorithms were evaluated:
+
+- Random Forest
+- Extra Trees
+- Gradient Boosting
+- Histogram Gradient Boosting
+
+Feature groups included:
+
+- Raw
+- Smoothed
+- Dynamic
+- Combined
+- Advanced
+
+========================================
+5. BEST WITHIN-RECORDING RESULT
+========================================
+
+Recording: wifi_dataset (2).csv
+
+Best configuration:
+Combined Features + Random Forest
+
+Model MAE: 0.723
+Baseline MAE: 0.765
+
+Improvement: approximately 5.5%
+
+This is a limited improvement on one recording and does not establish reliable generalization.
+
+========================================
+6. CROSS-RECORDING EVALUATION
+========================================
+
+Training on recording 2 and testing on recording 3:
+
+Baseline MAE: 1.421
+Best model MAE: 1.553
+
+Training on recording 3 and testing on recording 2:
+
+Baseline MAE: 1.288
+Best model MAE: 1.653
+
+The models did not outperform the baseline in cross-recording evaluation.
+
+========================================
+7. ERROR ANALYSIS
+========================================
+
+Performance varied across occupancy levels.
+
+The model struggled particularly with less frequent occupancy counts and showed prediction bias in recording 3.
+
+The limited number of samples for some occupancy levels makes reliable evaluation difficult.
+
+========================================
+8. MAIN FINDINGS
+========================================
+
+- CSI variance alone did not provide a strong and consistent relationship with occupancy count.
+- Signal behavior differed between recordings.
+- Advanced temporal features did not solve the generalization problem.
+- Within-recording performance was better than cross-recording performance.
+- The third recording provides occupancy labels but no corresponding CSI features.
+
+========================================
+9. LIMITATIONS
+========================================
+
+- Only scalar CSI variance measurements were available.
+- Raw CSI subcarrier amplitude and phase measurements were unavailable.
+- Only two recordings contained usable CSI variance.
+- More independent recordings and balanced occupancy levels are required.
+
+========================================
+10. RECOMMENDATIONS
+========================================
+
+- Collect raw CSI amplitude and phase measurements.
+- Record multiple sessions under different environmental conditions.
+- Improve occupancy-level balance.
+- Evaluate models on independent sessions.
+- Reassess model sensitivity after collecting richer CSI data.
+
+========================================
+11. CONCLUSION
+========================================
+
+A complete initial data analysis, feature engineering, model comparison, and error analysis pipeline was implemented.
+
+The best within-recording result achieved an MAE of 0.723, but cross-recording evaluation showed that the current model does not generalize reliably.
+
+Further data collection and richer CSI measurements are necessary before claiming reliable real-world occupancy estimation.
+
+END OF REPORT

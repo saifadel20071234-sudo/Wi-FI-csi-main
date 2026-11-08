@@ -1,0 +1,53 @@
+Split,Features,Model,MAE
+Cross: wifi_dataset (2).csv -> wifi_dataset (3).csv,Baseline,Median,1.420965058236273
+Cross: wifi_dataset (2).csv -> wifi_dataset (3).csv,Advanced,ExtraTrees,1.5529329289970335
+Cross: wifi_dataset (2).csv -> wifi_dataset (3).csv,Combined,ExtraTrees,1.559126796991429
+Cross: wifi_dataset (2).csv -> wifi_dataset (3).csv,Combined,RandomForest,1.5704676885101334
+Cross: wifi_dataset (2).csv -> wifi_dataset (3).csv,Advanced,RandomForest,1.570777702017862
+Cross: wifi_dataset (2).csv -> wifi_dataset (3).csv,Smoothed,ExtraTrees,1.5819498734377844
+Cross: wifi_dataset (2).csv -> wifi_dataset (3).csv,Advanced,GradientBoosting,1.5953662481480926
+Cross: wifi_dataset (2).csv -> wifi_dataset (3).csv,Combined,GradientBoosting,1.5979277780411916
+Cross: wifi_dataset (2).csv -> wifi_dataset (3).csv,Smoothed,RandomForest,1.6082105957006416
+Cross: wifi_dataset (2).csv -> wifi_dataset (3).csv,Raw,ExtraTrees,1.6120333725855247
+Cross: wifi_dataset (2).csv -> wifi_dataset (3).csv,Raw,GradientBoosting,1.673349803469218
+Cross: wifi_dataset (2).csv -> wifi_dataset (3).csv,Smoothed,GradientBoosting,1.6889448924984145
+Cross: wifi_dataset (2).csv -> wifi_dataset (3).csv,Raw,RandomForest,1.6964942309688529
+Cross: wifi_dataset (3).csv -> wifi_dataset (2).csv,Baseline,Median,1.2882205513784462
+Cross: wifi_dataset (3).csv -> wifi_dataset (2).csv,Raw,ExtraTrees,1.6533327809076244
+Cross: wifi_dataset (3).csv -> wifi_dataset (2).csv,Raw,RandomForest,1.6807661327572088
+Cross: wifi_dataset (3).csv -> wifi_dataset (2).csv,Raw,GradientBoosting,1.696385941635667
+Cross: wifi_dataset (3).csv -> wifi_dataset (2).csv,Smoothed,GradientBoosting,1.7146156862737902
+Cross: wifi_dataset (3).csv -> wifi_dataset (2).csv,Smoothed,RandomForest,1.7171889833887908
+Cross: wifi_dataset (3).csv -> wifi_dataset (2).csv,Smoothed,ExtraTrees,1.7270761749091563
+Cross: wifi_dataset (3).csv -> wifi_dataset (2).csv,Combined,ExtraTrees,1.7602268730194712
+Cross: wifi_dataset (3).csv -> wifi_dataset (2).csv,Combined,GradientBoosting,1.7650533737262974
+Cross: wifi_dataset (3).csv -> wifi_dataset (2).csv,Advanced,ExtraTrees,1.7677410509452178
+Cross: wifi_dataset (3).csv -> wifi_dataset (2).csv,Advanced,GradientBoosting,1.7872116784864593
+Cross: wifi_dataset (3).csv -> wifi_dataset (2).csv,Advanced,RandomForest,1.8200648484779753
+Cross: wifi_dataset (3).csv -> wifi_dataset (2).csv,Combined,RandomForest,1.8247078442772218
+Within: wifi_dataset (2).csv,Combined,RandomForest,0.7231562553816699
+Within: wifi_dataset (2).csv,Smoothed,ExtraTrees,0.7239869423196169
+Within: wifi_dataset (2).csv,Advanced,RandomForest,0.7251285625483509
+Within: wifi_dataset (2).csv,Smoothed,RandomForest,0.7398974517002965
+Within: wifi_dataset (2).csv,Advanced,ExtraTrees,0.742882458433653
+Within: wifi_dataset (2).csv,Combined,ExtraTrees,0.7479790743589112
+Within: wifi_dataset (2).csv,Raw,ExtraTrees,0.7636109647605847
+Within: wifi_dataset (2).csv,Smoothed,GradientBoosting,0.7636929779889289
+Within: wifi_dataset (2).csv,Baseline,Median,0.7652173913043478
+Within: wifi_dataset (2).csv,Raw,GradientBoosting,0.7795416791539267
+Within: wifi_dataset (2).csv,Advanced,GradientBoosting,0.786023788696989
+Within: wifi_dataset (2).csv,Combined,GradientBoosting,0.7980817726824033
+Within: wifi_dataset (2).csv,Raw,RandomForest,0.7999771998659977
+Within: wifi_dataset (3).csv,Baseline,Median,0.9034090909090909
+Within: wifi_dataset (3).csv,Raw,RandomForest,0.9913347261935743
+Within: wifi_dataset (3).csv,Raw,GradientBoosting,0.9947277350494956
+Within: wifi_dataset (3).csv,Raw,ExtraTrees,1.0178553886299322
+Within: wifi_dataset (3).csv,Smoothed,ExtraTrees,1.0811358973174756
+Within: wifi_dataset (3).csv,Smoothed,GradientBoosting,1.093885686647045
+Within: wifi_dataset (3).csv,Smoothed,RandomForest,1.1390451632639293
+Within: wifi_dataset (3).csv,Combined,GradientBoosting,1.1481444373276355
+Within: wifi_dataset (3).csv,Advanced,GradientBoosting,1.1485147925333052
+Within: wifi_dataset (3).csv,Advanced,ExtraTrees,1.1814675645392125
+Within: wifi_dataset (3).csv,Combined,ExtraTrees,1.1816921535052982
+Within: wifi_dataset (3).csv,Advanced,RandomForest,1.2052525258063744
+Within: wifi_dataset (3).csv,Combined,RandomForest,1.2076775614660624

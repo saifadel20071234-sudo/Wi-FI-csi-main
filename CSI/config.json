@@ -1,0 +1,61 @@
+{
+  "room": {
+    "width_m": 4.0,
+    "height_m": 5.0,
+    "label": "Living Room"
+  },
+  "router": {
+    "label": "Router (AP)",
+    "x": 0.5,
+    "y": 0.06
+  },
+  "devices": [
+    {
+      "id": "esp32_h",
+      "label": "ESP32 #1 (Horizontal Link)",
+      "port": "COM8",
+      "x": 0.1,
+      "y": 0.35
+    },
+    {
+      "id": "esp32_v",
+      "label": "ESP32 #2 (Vertical Link)",
+      "port": "",
+      "x": 0.65,
+      "y": 0.9
+    }
+  ],
+  "serial": {
+    "baud": 921600,
+    "timeout": 1.0
+  },
+  "processing": {
+    "window_seconds": 2.0,
+    "calibration_seconds": 4.0,
+    "activity_scale": 0.15,
+    "rssi_weight": 0.5,
+    "motion_threshold": 0.55,
+    "smoothing_alpha": 0.30,
+    "heat_decay": 0.965,
+    "heat_intensity": 14.0,
+    "count_thresholds": [1.5, 2.5, 3.5],
+    "kalman_process_noise": 0.001,
+    "kalman_measurement_noise": 0.01,
+    "blob_threshold": 55,
+    "blob_min_area": 12.0,
+    "blob_open_ksize": 3,
+    "blob_close_ksize": 5,
+    "blob_blur_ksize": 5,
+    "count_window_frames": 40,
+    "count_model": "count_model.pkl",
+    "count_scaler": "count_scaler.pkl",
+    "rti_link_width": 0.30
+  },
+  "visual": {
+    "window_name": "WiFi CSI Sensing - Human Detection",
+    "width": 1200,
+    "height": 820,
+    "show_raw": false,
+    "fps_target": 30
+  }
+}

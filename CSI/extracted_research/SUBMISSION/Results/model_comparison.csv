@@ -1,0 +1,65 @@
+Features,Model,MAE,Baseline_MAE,Improvement
+Smoothed,Hist Gradient Boosting,1.552,1.421,-0.131
+Smoothed,Extra Trees,1.577,1.421,-0.156
+Smoothed,Random Forest,1.597,1.421,-0.176
+Raw,Extra Trees,1.612,1.421,-0.192
+Combined,Hist Gradient Boosting,1.612,1.421,-0.191
+Combined,Random Forest,1.627,1.421,-0.206
+Raw,Hist Gradient Boosting,1.635,1.421,-0.214
+Combined,Extra Trees,1.648,1.421,-0.227
+Raw,Gradient Boosting,1.654,1.421,-0.233
+Combined,Gradient Boosting,1.666,1.421,-0.245
+Smoothed,Gradient Boosting,1.684,1.421,-0.263
+Raw,Random Forest,1.689,1.421,-0.268
+Dynamic,Gradient Boosting,1.698,1.421,-0.277
+Dynamic,Extra Trees,1.706,1.421,-0.285
+Dynamic,Hist Gradient Boosting,1.752,1.421,-0.331
+Dynamic,Random Forest,1.758,1.421,-0.337
+Combined,Random Forest,1.611,1.288,-0.323
+Dynamic,Extra Trees,1.628,1.288,-0.34
+Combined,Gradient Boosting,1.633,1.288,-0.344
+Combined,Hist Gradient Boosting,1.634,1.288,-0.345
+Combined,Extra Trees,1.636,1.288,-0.348
+Dynamic,Gradient Boosting,1.637,1.288,-0.349
+Raw,Extra Trees,1.653,1.288,-0.365
+Dynamic,Random Forest,1.662,1.288,-0.373
+Dynamic,Hist Gradient Boosting,1.664,1.288,-0.376
+Raw,Random Forest,1.683,1.288,-0.395
+Raw,Hist Gradient Boosting,1.683,1.288,-0.395
+Raw,Gradient Boosting,1.691,1.288,-0.402
+Smoothed,Gradient Boosting,1.718,1.288,-0.43
+Smoothed,Extra Trees,1.728,1.288,-0.44
+Smoothed,Random Forest,1.759,1.288,-0.471
+Smoothed,Hist Gradient Boosting,1.767,1.288,-0.479
+Dynamic,Gradient Boosting,0.743,0.765,0.022
+Combined,Gradient Boosting,0.746,0.765,0.019
+Smoothed,Extra Trees,0.762,0.765,0.003
+Raw,Extra Trees,0.763,0.765,0.002
+Dynamic,Extra Trees,0.765,0.765,-0.0
+Smoothed,Gradient Boosting,0.767,0.765,-0.002
+Raw,Gradient Boosting,0.774,0.765,-0.009
+Dynamic,Random Forest,0.778,0.765,-0.013
+Combined,Extra Trees,0.778,0.765,-0.012
+Smoothed,Random Forest,0.782,0.765,-0.017
+Combined,Random Forest,0.783,0.765,-0.018
+Dynamic,Hist Gradient Boosting,0.795,0.765,-0.03
+Raw,Random Forest,0.8,0.765,-0.034
+Raw,Hist Gradient Boosting,0.804,0.765,-0.039
+Combined,Hist Gradient Boosting,0.808,0.765,-0.042
+Smoothed,Hist Gradient Boosting,0.829,0.765,-0.064
+Raw,Random Forest,0.993,0.903,-0.089
+Raw,Gradient Boosting,0.999,0.903,-0.095
+Raw,Hist Gradient Boosting,1.013,0.903,-0.109
+Raw,Extra Trees,1.018,0.903,-0.115
+Dynamic,Gradient Boosting,1.027,0.903,-0.124
+Dynamic,Extra Trees,1.028,0.903,-0.124
+Combined,Gradient Boosting,1.046,0.903,-0.142
+Dynamic,Hist Gradient Boosting,1.063,0.903,-0.159
+Dynamic,Random Forest,1.065,0.903,-0.162
+Smoothed,Gradient Boosting,1.088,0.903,-0.185
+Combined,Extra Trees,1.092,0.903,-0.188
+Combined,Random Forest,1.095,0.903,-0.191
+Smoothed,Extra Trees,1.112,0.903,-0.209
+Combined,Hist Gradient Boosting,1.117,0.903,-0.214
+Smoothed,Hist Gradient Boosting,1.148,0.903,-0.245
+Smoothed,Random Forest,1.186,0.903,-0.282

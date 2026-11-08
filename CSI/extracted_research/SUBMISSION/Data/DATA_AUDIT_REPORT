@@ -1,0 +1,28 @@
+CSI DATA AUDIT — FIRST PASS
+
+Nested ESP32 logs: 1000 rows from 2 files.
+Time span: 2026-09-05 01:59:50.611692 to 2026-09-05 15:42:48.513122.
+Nodes: 1 (corridor_node_1).
+Missing values in key columns: {'people_count': 0, 'device_count_raw': 0, 'csi_variance': 0, 'csi_people_estimate': 0, 'timestamp': 0}.
+Negative CSI variance rows: 0.
+Rows where people_count differs from device_count_raw: 1.
+people_count distribution: {0: 2, 1: 27, 2: 145, 3: 250, 4: 324, 5: 164, 6: 57, 7: 20, 8: 11}.
+CSI variance quantiles: {0.0: 0.1421, 0.25: 2.4319, 0.5: 6.0442, 0.75: 12.1989, 0.9: 19.7897, 0.95: 24.9153, 0.99: 50.651, 1.0: 85.6694}.
+Correlation people_count vs csi_variance: -0.1154.
+Correlation people_count vs csi_people_estimate: 0.2677.
+Rows where csi_people_estimate == 0: 787 / 1000.
+
+IMPORTANT FINDINGS:
+- wifi_dataset.csv is a separate real_esp32 count-only log (928 rows) with no CSI variance/features; do not merge it into feature training.
+- university_simulated_week*.csv are simulated data and must remain separate from real ESP32 validation.
+- In wifi_dataset (2).csv, csi_people_estimate is zero in every row.
+- Across nested CSI logs, people_count and device_count_raw are almost identical, so confirm whether people_count is independently hand-labelled ground truth or simply copied from device count.
+- Current CSI variance has weak linear association with people_count in these logs; a single threshold on variance is unlikely to estimate exact occupancy reliably.
+- Do not train/evaluate a supervised model until label provenance is confirmed and measurements are grouped by recording/session to avoid leakage.
+
+NEXT REQUIRED DATA FOR PROPER CALIBRATION:
+1. Confirm ground-truth people count for each recording (manual observer count, time-aligned).
+2. Record CSI raw/derived features over stable intervals for each known occupancy: empty, 1, 2, 3... people.
+3. Include transitions, different positions, movement/no movement, and multiple sessions/days.
+4. Preserve node_id, session_id, timestamp, and a reliable occupancy label.
+5. Tune thresholds on training sessions, then report performance on held-out sessions.
