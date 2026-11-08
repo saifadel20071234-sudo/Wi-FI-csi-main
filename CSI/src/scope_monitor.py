@@ -119,13 +119,11 @@ class SingleLinkEngine:
 
         # People counting state machine
         self.total_crossings: int = 0
-        self.instant_people: int = 0   # live estimate (0, 1, 2, 3 people)
-        self._instant_hist: deque = deque(maxlen=7)  # temporal smoothing window
+        self.instant_people: int = 0   # live estimate while beam is active
         self._in_crossing: bool = False
         self._cross_start_t: float = 0.0
         self._cross_peak_score: float = 0.0
         self._cross_peak_drop: float = 0.0
-        self._cross_peak_var: float = 0.0
         self._cross_peak_ema_diff: float = 0.0
         self._cooldown_until: float = 0.0
         self.recent_events: deque = deque(maxlen=5)
@@ -147,7 +145,6 @@ class SingleLinkEngine:
         self._in_crossing = False
         self._cooldown_until = 0.0
         self.instant_people = 0
-        self._instant_hist.clear()
 
     def reset_counter(self) -> None:
         """Zero the passage counter; does NOT touch the RF baseline."""
@@ -156,7 +153,6 @@ class SingleLinkEngine:
         self._in_crossing = False
         self._cooldown_until = 0.0
         self.instant_people = 0
-        self._instant_hist.clear()
 
     @property
     def calibrating(self) -> bool:
@@ -173,50 +169,19 @@ class SingleLinkEngine:
     def in_cooldown(self) -> bool:
         return time.monotonic() < self._cooldown_until
 
-    # ── Multi-factor Crowd Metrics & Classifiers ──────────────────────────────
-    def _crowd_metric(self, score: float, drop: float, rel_var: float) -> float:
-        """Combined multi-subcarrier disturbance metric [0.0 .. ~1.5].
-        
-        Weights:
-          • Activity Score (50%): general wave disturbance across all 64 subcarriers
-          • RSSI Drop (30%): signal power absorption by human body volume
-          • Subcarrier Variance (20%): frequency-selective multipath fading
-        """
-        s_norm = min(1.0, max(0.0, score) / 100.0)
-        d_norm = min(1.0, max(0.0, drop) / 13.0)
-        v_norm = min(1.0, max(0.0, rel_var) / 0.22)
-        return 0.50 * s_norm + 0.30 * d_norm + 0.20 * v_norm
-
-    def _estimate_instant(self, score: float, drop: float, rel_var: float) -> int:
-        """Smooth real-time estimate of people in the signal area (0, 1, 2, or 3)."""
-        # Hysteresis floor for empty room
-        active_floor = max(14.0, self.threshold - 10.0)
-        if score < active_floor:
-            raw_est = 0
-        else:
-            metric = self._crowd_metric(score, drop, rel_var)
-            if metric >= 0.78:
-                raw_est = 3
-            elif metric >= 0.52:
-                raw_est = 2
-            else:
-                raw_est = 1
-
-        self._instant_hist.append(raw_est)
-        # Robust majority vote over recent frames to prevent 1-frame jitter
-        counts: Dict[int, int] = {}
-        for val in self._instant_hist:
-            counts[val] = counts.get(val, 0) + 1
-        return max(counts, key=counts.get)
-
-    def _classify(self, duration: float, peak_score: float, peak_drop: float, peak_var: float) -> Tuple[int, str]:
+    # ── Crowd classifier (1 or 2 People) ──────────────────────────────────────
+    def _classify(self, duration: float, peak_score: float, rssi_drop: float) -> Tuple[int, str]:
         """Return (count, label) for a completed crossing event."""
-        peak_metric = self._crowd_metric(peak_score, peak_drop, peak_var)
-        if peak_metric >= 0.78:
-            return 3, "3 People"
-        elif peak_metric >= 0.52:
+        if duration >= 1.2 and peak_score >= 88.0 and rssi_drop >= 18.0:
             return 2, "2 People"
         return 1, "1 Person"
+
+    # ── Live instant-people estimate (while beam is active) ───────────────────
+    def _estimate_instant(self, peak_score: float, rssi_drop: float, elapsed: float) -> int:
+        """Rough real-time crowd estimate (1 or 2 people)."""
+        if elapsed >= 0.9 and peak_score >= 88.0 and rssi_drop >= 18.0:
+            return 2
+        return 1
 
     # ── Main update loop ──────────────────────────────────────────────────────
     def update(self, frame: Dict[str, Any]) -> float:
@@ -289,13 +254,16 @@ class SingleLinkEngine:
                 self._cross_start_t = now
                 self._cross_peak_score = self.current_score
                 self._cross_peak_drop = rssi_drop
-                self._cross_peak_var = self.raw_variance
                 self._cross_peak_ema_diff = self.var_ema_diff
             else:
                 self._cross_peak_score = max(self._cross_peak_score, self.current_score)
                 self._cross_peak_drop = max(self._cross_peak_drop, rssi_drop)
-                self._cross_peak_var = max(self._cross_peak_var, self.raw_variance)
                 self._cross_peak_ema_diff = max(self._cross_peak_ema_diff, self.var_ema_diff)
+
+            elapsed_cross = now - self._cross_start_t
+            self.instant_people = self._estimate_instant(
+                self._cross_peak_score, self._cross_peak_drop, elapsed_cross
+            )
 
         # BEAM CLEAR
         elif self.current_score < hysteresis_low:
@@ -303,7 +271,7 @@ class SingleLinkEngine:
                 duration = now - self._cross_start_t
                 if duration >= 0.30 and not self.in_cooldown:
                     count_added, kind = self._classify(
-                        duration, self._cross_peak_score, self._cross_peak_drop, self._cross_peak_var
+                        duration, self._cross_peak_score, self._cross_peak_drop
                     )
                     self.total_crossings += count_added
                     self.recent_events.append((
@@ -315,13 +283,8 @@ class SingleLinkEngine:
                 self._in_crossing = False
                 self._cross_peak_score = 0.0
                 self._cross_peak_drop = 0.0
-                self._cross_peak_var = 0.0
                 self._cross_peak_ema_diff = 0.0
-
-        # Continuous smooth estimate of instant people in beam
-        self.instant_people = self._estimate_instant(
-            self.current_score, rssi_drop, self.raw_variance
-        )
+                self.instant_people = 0
 
         return self.current_score
 
@@ -599,11 +562,8 @@ class ScopeUI:
         elif engine.instant_people == 1:
             inst_text = "~1  Person"
             inst_col = COLOR_ORANGE
-        elif engine.instant_people == 2:
-            inst_text = "~2  People"
-            inst_col = COLOR_YELLOW
         else:
-            inst_text = "~3  People!"
+            inst_text = "~2  People"
             inst_col = COLOR_RED
 
         cv2.putText(canvas, inst_text, (px + 14, card2_y + 58),
@@ -624,12 +584,8 @@ class ScopeUI:
         else:
             ey = card3_y + 44
             for t_str, added, kind, pk, dur in list(engine.recent_events)[-3:]:
-                if added == 1:
-                    col = COLOR_GREEN
-                elif added == 2:
-                    col = COLOR_YELLOW
-                else:
-                    col = COLOR_RED
+                # Colour: green=1, yellow=2
+                col = COLOR_GREEN if added == 1 else COLOR_YELLOW
                 txt = f"{t_str} | +{added} {kind} ({dur:.1f}s)"
                 cv2.putText(canvas, txt, (px + 14, ey),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.40, col, 1, cv2.LINE_AA)
