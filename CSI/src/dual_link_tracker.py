@@ -474,7 +474,7 @@ class TrackerUI:
         self.hud_w = width - self.hud_x
 
         # Trail
-        self.trail: deque = deque(maxlen=16)
+        self.trail: deque = deque(maxlen=80)
         self._fps_times: deque = deque(maxlen=30)
 
         cv2.namedWindow(title, cv2.WINDOW_NORMAL)
@@ -506,32 +506,31 @@ class TrackerUI:
         norm_x: float = 0.5,
         norm_y: float = 0.5,
     ) -> None:
-        """Renders the authentic 3D FLIR thermal human avatar with futuristic HUD tracking."""
+        """Renders the authentic 3D holographic wireframe human avatar with futuristic HUD radar."""
         rx1 = self.room_x0 + self.room_w
         ry1 = self.room_y0 + self.room_h
 
-        # 1. Ground Thermal Radar Pedestal under feet at (cx, cy)
-        ped_col = COLOR_CYAN if is_stationary else (45, 195, 255)
-        ped_w = 36
+        # 1. Holographic Ground Pedestal under feet at (cx, cy)
+        ped_col = COLOR_CYAN if is_stationary else (50, 220, 255)
+        ped_w = 34
         ped_h = 13
 
-        # Soft thermal foot-contact radiation glow directly under feet
+        # Soft radar floor halo
         overlay = canvas.copy()
-        glow_bgr = (20, 60, 200) if not is_stationary else (120, 80, 25)
-        cv2.ellipse(overlay, (cx, cy + 2), (int(ped_w * 1.3), int(ped_h * 1.3)), 0, 0, 360, glow_bgr, -1, cv2.LINE_AA)
-        cv2.addWeighted(overlay, 0.35, canvas, 0.65, 0, canvas)
+        cv2.ellipse(overlay, (cx, cy), (int(ped_w * 1.5), int(ped_h * 1.5)), 0, 0, 360, ped_col, -1, cv2.LINE_AA)
+        cv2.addWeighted(overlay, 0.20 if is_stationary else 0.30, canvas, 0.80 if is_stationary else 0.70, 0, canvas)
 
-        # Concentric tech rings with cardinal ticks
+        # Concentric rings with cardinal ticks
         cv2.ellipse(canvas, (cx, cy), (ped_w, ped_h), 0, 0, 360, ped_col, 2, cv2.LINE_AA)
-        cv2.ellipse(canvas, (cx, cy), (int(ped_w * 0.45), int(ped_h * 0.45)), 0, 0, 360, (255, 255, 255), 1, cv2.LINE_AA)
-        cv2.line(canvas, (cx - ped_w - 4, cy), (cx - ped_w + 4, cy), ped_col, 2)
-        cv2.line(canvas, (cx + ped_w - 4, cy), (cx + ped_w + 4, cy), ped_col, 2)
-        cv2.line(canvas, (cx, cy - ped_h - 3), (cx, cy - ped_h + 3), ped_col, 2)
-        cv2.line(canvas, (cx, cy + ped_h - 3), (cx, cy + ped_h + 3), ped_col, 2)
+        cv2.ellipse(canvas, (cx, cy), (int(ped_w * 0.5), int(ped_h * 0.5)), 0, 0, 360, (255, 255, 255), 1, cv2.LINE_AA)
+        cv2.line(canvas, (cx - ped_w - 3, cy), (cx - ped_w + 3, cy), ped_col, 2)
+        cv2.line(canvas, (cx + ped_w - 3, cy), (cx + ped_w + 3, cy), ped_col, 2)
+        cv2.line(canvas, (cx, cy - ped_h - 2), (cx, cy - ped_h + 2), ped_col, 2)
+        cv2.line(canvas, (cx, cy + ped_h - 2), (cx, cy + ped_h + 2), ped_col, 2)
         cv2.circle(canvas, (cx, cy), 3, (255, 255, 255), -1, cv2.LINE_AA)
 
-        # 2. Render Authentic 3D FLIR Thermal Human Figure
-        target_h = 120  # High-definition prominent thermal human body
+        # 2. Render Authentic 3D Hologram Avatar (Large, crisp, prominent!)
+        target_h = 118  # High-tech prominent human figure
         if self.avatar_sprite is not None and self.avatar_sprite.ndim == 3 and self.avatar_sprite.shape[2] == 4:
             aspect = self.avatar_sprite.shape[1] / float(self.avatar_sprite.shape[0])
             target_w = max(16, int(target_h * aspect))
@@ -561,20 +560,19 @@ class TrackerUI:
 
                 if is_stationary:
                     spr_rgb = spr_rgb.copy()
-                    # Soft equilibrium tint when locked/still
-                    spr_rgb[:, :, 0] = np.clip(spr_rgb[:, :, 0].astype(float) * 1.15, 0, 255).astype(np.uint8)
+                    spr_rgb[:, :, 0] = np.clip(spr_rgb[:, :, 0].astype(float) * 1.18, 0, 255).astype(np.uint8)
 
                 roi = canvas[dest_y0:dest_y1, dest_x0:dest_x1]
                 for c in range(3):
                     roi[:, :, c] = (spr_rgb[:, :, c] * spr_alpha + roi[:, :, c] * (1.0 - spr_alpha)).astype(np.uint8)
 
-            # 3. Futuristic HUD Corner Reticle Brackets framing the thermal figure
-            bx0 = max(self.room_x0 + 2, spr_x0 - 7)
-            by0 = max(self.room_y0 + 2, spr_y0 - 5)
-            bx1 = min(rx1 - 2, spr_x1 + 7)
-            by1 = min(ry1 - 2, spr_y1 + 5)
+            # 3. Futuristic HUD Corner Reticle Brackets framing the human figure
+            bx0 = max(self.room_x0 + 2, spr_x0 - 6)
+            by0 = max(self.room_y0 + 2, spr_y0 - 4)
+            bx1 = min(rx1 - 2, spr_x1 + 6)
+            by1 = min(ry1 - 2, spr_y1 + 4)
             b_col = COLOR_CYAN if is_stationary else (45, 205, 255)
-            blen = 10
+            blen = 9
 
             # Corner lines
             cv2.line(canvas, (bx0, by0), (bx0 + blen, by0), b_col, 2)
@@ -587,9 +585,9 @@ class TrackerUI:
             cv2.line(canvas, (bx1, by1), (bx1, by1 - blen), b_col, 2)
 
             # 4. Floating Holographic Status Badge (Above the head)
-            tag_text = f"TARGET: ({norm_x:.2f}, {norm_y:.2f}) [THERMAL ACQUIRED]" if not is_stationary else f"LOCKED: ({norm_x:.2f}, {norm_y:.2f}) [STATIONARY]"
-            tag_y = max(self.room_y0 + 20, spr_y0 - 13)
-            (tw, th), _ = cv2.getTextSize(tag_text, cv2.FONT_HERSHEY_DUPLEX, 0.42, 1)
+            tag_text = f"TARGET: ({norm_x:.2f}, {norm_y:.2f})" if not is_stationary else f"LOCKED: ({norm_x:.2f}, {norm_y:.2f})"
+            tag_y = max(self.room_y0 + 20, spr_y0 - 12)
+            (tw, th), _ = cv2.getTextSize(tag_text, cv2.FONT_HERSHEY_DUPLEX, 0.44, 1)
             t_x0 = np.clip(cx - tw // 2 - 8, self.room_x0 + 4, rx1 - tw - 18)
             t_x1 = t_x0 + tw + 16
             t_y0 = tag_y - th - 6
@@ -597,7 +595,7 @@ class TrackerUI:
             cv2.rectangle(canvas, (t_x0, t_y0), (t_x1, t_y1), (18, 22, 32), -1)
             cv2.rectangle(canvas, (t_x0, t_y0), (t_x1, t_y1), b_col, 1)
             cv2.putText(canvas, tag_text, (t_x0 + 8, tag_y - 2),
-                        cv2.FONT_HERSHEY_DUPLEX, 0.42, TEXT_WHITE, 1, cv2.LINE_AA)
+                        cv2.FONT_HERSHEY_DUPLEX, 0.44, TEXT_WHITE, 1, cv2.LINE_AA)
         else:
             self._draw_procedural_thermal_human(canvas, cx, cy, is_stationary)
 
@@ -703,13 +701,10 @@ class TrackerUI:
             cv2.line(canvas, (gx, self.room_y0), (gx, ry1), GRID_COLOR, 1)
             cv2.line(canvas, (self.room_x0, gy), (rx1, gy), GRID_COLOR, 1)
 
-        # Heatmap overlay: Room grid stays clean, dark and high-tech;
-        # the 3D human body itself acts as the primary radiant thermal signature.
-        # Radar range rings for high-tech presentation
-        rcx = self.room_x0 + self.room_w // 2
-        rcy = self.room_y0 + self.room_h // 2
-        for r_dist in (110, 220):
-            cv2.circle(canvas, (rcx, rcy), r_dist, (22, 30, 42), 1, cv2.LINE_AA)
+        # Heatmap overlay
+        heat_bgr = heatmap.to_bgr(self.room_w, self.room_h)
+        roi = canvas[self.room_y0:ry1, self.room_x0:rx1]
+        cv2.addWeighted(heat_bgr, 0.60, roi, 0.40, 0, dst=roi)
 
         # Link beam visualizations
         # Link 1: horizontal beam (left ↔ right across room at y=0.35)
@@ -746,15 +741,13 @@ class TrackerUI:
             cv2.putText(canvas, f"Link2: {s2_pct}%", (self.room_x0 + 4, self.room_y0 + 32),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.42, s2_col, 1, cv2.LINE_AA)
 
-        # Person trail: Sleek thermal energy trail
+        # Person trail
         if len(self.trail) >= 2:
             pts = list(self.trail)
             for i in range(1, len(pts)):
                 alpha = i / len(pts)
-                col = (int(240 * alpha * 0.8), int(160 * alpha * 0.7), int(45 * alpha * 0.4))
-                cv2.line(canvas, pts[i - 1], pts[i], col, 1 if i < len(pts) // 2 else 2, cv2.LINE_AA)
-                if i % 3 == 0:
-                    cv2.circle(canvas, pts[i], 2, (int(255 * alpha), int(220 * alpha), int(90 * alpha)), -1, cv2.LINE_AA)
+                col = (int(60 * alpha), int(190 * alpha), int(80 * alpha))
+                cv2.line(canvas, pts[i - 1], pts[i], col, 2, cv2.LINE_AA)
 
         # Person Thermal Avatar (Stays visible and locked when stationary!)
         if presence:
@@ -762,8 +755,8 @@ class TrackerUI:
             if not is_stationary:
                 self.trail.append((pdx, pdy))
 
-            # Floor guide crosshairs (subtle cyber lines)
-            ch_col = (30, 42, 54) if is_stationary else (24, 40, 32)
+            # Crosshairs on floor
+            ch_col = (70, 110, 120) if is_stationary else (50, 100, 55)
             cv2.line(canvas, (self.room_x0, pdy), (rx1, pdy), ch_col, 1)
             cv2.line(canvas, (pdx, self.room_y0), (pdx, ry1), ch_col, 1)
 
@@ -842,20 +835,12 @@ class TrackerUI:
             bar2_col = COLOR_RED if eng2.in_beam else COLOR_TEAL
             cv2.rectangle(canvas, (hx, hy), (hx + fill2, hy + 10), bar2_col, -1)
             cv2.line(canvas, (hx + tmark, hy - 3), (hx + tmark, hy + 13), COLOR_YELLOW, 2)
-        elif port2 and port2 not in ("", "MISSING", "None"):
+        else:
             hline("  Score : --", TEXT_DARK)
             hline("  RSSI  : --", TEXT_DARK, 0.44)
-            hline(f"  Port  : {port2}", TEXT_DARK, 0.40)
-            status_txt = "CALIBRATING..." if (eng2.calibrating and eng2.online) else "WAITING FOR SIGNAL"
-            status_col = COLOR_YELLOW if eng2.online else COLOR_RED
-            hline(f"  Status: {status_txt}", status_col, 0.38)
+            hline("  Port  : Not Connected", TEXT_DARK, 0.40)
+            hline("  Status: [STANDBY - SINGLE LINK]", COLOR_YELLOW, 0.42)
             cv2.rectangle(canvas, (hx, hy), (hx + bw_, hy + 10), GRID_COLOR, -1)
-        else:
-            hline("MODE: SINGLE-LINK 2D", COLOR_CYAN, 0.46, bold=2)
-            hline("  AP Carrier: S24 Ultra saif", TEXT_MUTED, 0.42)
-            hline("  Tracking  : 2D Spatial Skew", TEXT_MUTED, 0.42)
-            hline("  Subcarrier: 64 SC Continuous", TEXT_MUTED, 0.42)
-            hline("  Status    : ACTIVE (100% OK)", COLOR_GREEN, 0.42, bold=2)
         hy += 20
 
         hy += 10
@@ -1003,23 +988,15 @@ def main() -> int:
     port1_label = "DEMO"
     port2_label = "DEMO"
 
-    port1 = args.port1.strip()
-    port2 = args.port2.strip()
-    port1_label = "DEMO"
-    port2_label = "DEMO"
-
     if args.demo:
         print("== [DEMO MODE] Simulating 2D person movement ==")
         demo_source = DualLinkDemoSource(rate_hz=30.0)
-        port1 = "DEMO"
-        port2 = "DEMO"
     else:
         # Auto-detect or use provided ports
         port1 = args.port1.strip()
         port2 = args.port2.strip()
 
         # Try config.json if ports not provided
-        config_has_port2 = False
         if not port1 or not port2:
             try:
                 cfg = load_config(args.config)
@@ -1027,24 +1004,17 @@ def main() -> int:
                 if len(devs) >= 1 and not port1:
                     port1 = devs[0].get("port", "").strip()
                 if len(devs) >= 2 and not port2:
-                    p2_cfg = devs[1].get("port", "").strip()
-                    if p2_cfg:
-                        port2 = p2_cfg
-                        config_has_port2 = True
+                    port2 = devs[1].get("port", "").strip()
             except Exception:
                 pass
 
         # Auto-detect from connected serial ports
-        if not port1:
+        if not port1 or not port2:
             available = list_serial_ports()
-            if len(available) >= 1:
+            if len(available) >= 1 and not port1:
                 port1 = available[0]["device"]
                 print(f">> Auto-detected ESP32 #1 on {port1}")
-
-        # Only auto-detect port 2 if user passed --port2 or configured it in config.json
-        if not port2 and (args.port2 or config_has_port2):
-            available = list_serial_ports()
-            if len(available) >= 2:
+            if len(available) >= 2 and not port2:
                 port2 = available[1]["device"]
                 print(f">> Auto-detected ESP32 #2 on {port2}")
 
@@ -1070,7 +1040,7 @@ def main() -> int:
             reader2 = CSIReader(device_id="esp32_link2", port=port2, baud=args.baud, timeout=1.0)
             reader2.start()
         else:
-            print(">> Running in Single-Link Mode (2D Spatial Tracking with S24 Ultra saif)")
+            print("[WARNING] Only 1 ESP32 found — running in single-link mode (1D position only)")
 
     # --- Initialize engines ---
     eng1 = LinkEngine("link1", threshold=threshold)
@@ -1082,8 +1052,7 @@ def main() -> int:
     # --- Setup UI ---
     ui: Optional[TrackerUI] = None
     if not args.no_gui:
-        ui_title = f"WiFi CSI 2D Tracker — [{port1_label} | {port2_label}]" if port2 else f"WiFi CSI 2D Tracker — [{port1_label}]"
-        ui = TrackerUI(title=ui_title)
+        ui = TrackerUI(title=f"WiFi CSI 2D Tracker — [{port1_label} | {port2_label}]")
     else:
         print(f">> Console mode. Threshold: {threshold}%. Press Ctrl+C to quit.\n")
 
