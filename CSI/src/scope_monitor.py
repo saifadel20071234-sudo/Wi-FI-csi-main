@@ -85,7 +85,7 @@ class SingleLinkEngine:
         self,
         window_frames: int = 20,
         calibration_seconds: float = 3.0,
-        threshold: float = 38.0,
+        threshold: float = 53.0,
         activity_scale: float = 0.15,
     ) -> None:
         self.window_frames = window_frames
@@ -99,9 +99,11 @@ class SingleLinkEngine:
         # Baseline calibration
         self.baseline_mean: Optional[np.ndarray] = None
         self.baseline_rssi: Optional[float] = None
+        self.baseline_var: Optional[float] = None
         self.calib_start: float = time.monotonic()
         self._calib_amps: List[np.ndarray] = []
         self._calib_rssis: List[float] = []
+        self._raw_pct_hist: deque = deque(maxlen=5)
 
         # Live signal metrics
         self.current_score: float = 0.0
@@ -133,11 +135,13 @@ class SingleLinkEngine:
         """Reset baseline — keep the room quiet for 3 s after pressing C."""
         self.baseline_mean = None
         self.baseline_rssi = None
+        self.baseline_var = None
         self.calib_start = time.monotonic()
         self._calib_amps.clear()
         self._calib_rssis.clear()
         self._amp_hist.clear()
         self._score_window.clear()
+        self._raw_pct_hist.clear()
         self._var_ema_fast = 0.0
         self._var_ema_slow = 0.0
         self.var_ema_diff = 0.0
@@ -208,6 +212,9 @@ class SingleLinkEngine:
                 amps_arr = np.asarray(self._calib_amps, dtype=np.float32)
                 self.baseline_mean = np.mean(amps_arr, axis=0)
                 self.baseline_rssi = float(np.mean(self._calib_rssis))
+                base_vars = np.var(amps_arr, axis=0)
+                base_mean = float(np.mean(self.baseline_mean)) + 1e-6
+                self.baseline_var = float(np.mean(base_vars)) / base_mean
             return 0.0
 
         # ── 2) Score (relative variance + RSSI drop) ──────────────────────────
@@ -229,18 +236,40 @@ class SingleLinkEngine:
             self._var_ema_slow = 0.18 * rel_var + 0.82 * self._var_ema_slow
         self.var_ema_diff = max(0.0, self._var_ema_fast - self._var_ema_slow)
 
-        rel_var_norm = rel_var / (rel_var + self.activity_scale)
+        # Subtract ambient room noise floor measured during calibration
+        base_noise = self.baseline_var if self.baseline_var is not None else 0.04
+        net_var = max(0.0, rel_var - (base_noise * 1.12))
+        rel_var_norm = net_var / (net_var + self.activity_scale)
 
-        rssi_drop = max(0.0, (self.baseline_rssi or 0.0) - rssi)
-        self.current_rssi_drop = rssi_drop
-        rssi_drop_norm = rssi_drop / (rssi_drop + 8.0) if rssi_drop > 0 else 0.0
+        raw_drop = max(0.0, (self.baseline_rssi or 0.0) - rssi)
+        net_drop = max(0.0, raw_drop - 1.2)
+        self.current_rssi_drop = raw_drop
+        rssi_drop_norm = net_drop / (net_drop + 7.0) if net_drop > 0 else 0.0
 
         instant_pct = float(np.clip(
-            ((rel_var_norm + 0.6 * rssi_drop_norm) / 1.6) * 100.0, 0.0, 100.0
+            ((rel_var_norm + 0.65 * rssi_drop_norm) / 1.65) * 100.0, 0.0, 100.0
         ))
 
-        alpha = 0.55 if instant_pct > self.current_score else 0.20
-        self.current_score = alpha * instant_pct + (1.0 - alpha) * self.current_score
+        # 3-frame rolling median to absorb single-frame spike noise
+        self._raw_pct_hist.append(instant_pct)
+        filt_pct = float(np.median(self._raw_pct_hist)) if len(self._raw_pct_hist) >= 3 else instant_pct
+
+        # --- Dual-Regime Active vs. Quiet Baseline Control ---
+        thresh = self.threshold
+        quiet_floor = thresh - 8.0  # 45.0 for threshold 53.0
+
+        if filt_pct >= quiet_floor or filt_pct > (self.current_score + 6.0):
+            # ACTIVE MOTION / APPROACHING: Responsive rise with natural live motion wave ripples!
+            alpha = 0.48 if filt_pct > self.current_score else 0.22
+            self.current_score = alpha * filt_pct + (1.0 - alpha) * self.current_score
+        else:
+            # NOBODY PRESENT / STEPPED AWAY:
+            # Steady, gradual, noticeable descent straight to 0.0 flat line, completely killing high-frequency noise!
+            decay_step = max(0.40, 0.08 * self.current_score)
+            self.current_score = max(0.0, self.current_score - decay_step)
+            if self.current_score < 1.5:
+                self.current_score = 0.0
+
         self._score_window.append(self.current_score)
 
         # ── 3) Tripwire state machine ─────────────────────────────────────────
@@ -284,7 +313,9 @@ class SingleLinkEngine:
                 self._cross_peak_score = 0.0
                 self._cross_peak_drop = 0.0
                 self._cross_peak_ema_diff = 0.0
-                self.instant_people = 0
+
+            # Line drops to floor -> 0 Clear (Green: NORMAL)
+            self.instant_people = 0
 
         return self.current_score
 
@@ -658,7 +689,7 @@ def main() -> int:
     parser.add_argument("--demo", action="store_true", help="Run in simulation demo mode")
     parser.add_argument("--port", type=str, default="", help="Serial port of the ESP32 (e.g. COM8)")
     parser.add_argument("--baud", type=int, default=921600, help="Baud rate (default 921600)")
-    parser.add_argument("--threshold", type=float, default=38.0, help="Presence threshold percentage (0..100)")
+    parser.add_argument("--threshold", type=float, default=53.0, help="Presence threshold percentage (0..100)")
     parser.add_argument("--no-gui", action="store_true", help="Run in console-only mode")
     parser.add_argument("--config", default="config.json", help="Path to config.json")
     parser.add_argument("--seconds", type=float, default=0.0, help="Auto-stop after N seconds (0=run forever)")
