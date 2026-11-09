@@ -321,13 +321,15 @@ class DualLinkFusion:
 
         # --- FULL-ROOM SINGLE-LINK 2D TRACKING (1 ESP32) ---
         else:
-            norm_drop = min(1.0, rssi_drop1 / 4.5) if rssi_drop1 > 0 else 0.0
-            norm_score = min(1.0, score1 / 75.0)
-            act_x = 0.55 * norm_drop + 0.45 * norm_score
-            target_x = 0.90 - 0.80 * act_x
+            # Full dynamic range: walking in room spans the full canvas
+            norm_drop = min(1.0, rssi_drop1 / 3.6) if rssi_drop1 > 0 else 0.0
+            score_excess = max(0.0, score1 - 36.0)
+            norm_score = min(1.0, score_excess / 46.0)
+            act_x = 0.50 * norm_drop + 0.50 * norm_score
+            target_x = 0.88 - 0.76 * act_x
 
-            skew_norm = float(np.clip(sc_skew1 * 3.2, -1.0, 1.0))
-            target_y = 0.50 + 0.42 * skew_norm
+            skew_norm = float(np.clip(sc_skew1 * 4.6, -1.0, 1.0))
+            target_y = 0.50 + 0.40 * skew_norm
 
         target_x = float(np.clip(target_x, 0.08, 0.92))
         target_y = float(np.clip(target_y, 0.08, 0.92))
@@ -501,29 +503,37 @@ class TrackerUI:
         cy: int,
         is_stationary: bool,
         pres_score: float,
+        norm_x: float = 0.5,
+        norm_y: float = 0.5,
     ) -> None:
-        """Renders the thermal human avatar sprite with glowing aura and ground ring."""
-        # 1. Ground thermal ring under the feet at (cx, cy)
-        ring_col = COLOR_CYAN if is_stationary else (45, 185, 255)
-        foot_w = 26
-        foot_h = 10
+        """Renders the authentic 3D holographic wireframe human avatar with futuristic HUD radar."""
+        rx1 = self.room_x0 + self.room_w
+        ry1 = self.room_y0 + self.room_h
 
-        # Pulsing / dynamic floor aura
-        aura_r1 = int(foot_w * 1.5)
-        aura_r2 = int(foot_h * 1.5)
+        # 1. Holographic Ground Pedestal under feet at (cx, cy)
+        ped_col = COLOR_CYAN if is_stationary else (50, 220, 255)
+        ped_w = 34
+        ped_h = 13
+
+        # Soft radar floor halo
         overlay = canvas.copy()
-        cv2.ellipse(overlay, (cx, cy), (aura_r1, aura_r2), 0, 0, 360, ring_col, -1, cv2.LINE_AA)
-        aura_alpha = 0.22 if is_stationary else 0.35
-        cv2.addWeighted(overlay, aura_alpha, canvas, 1.0 - aura_alpha, 0, canvas)
+        cv2.ellipse(overlay, (cx, cy), (int(ped_w * 1.5), int(ped_h * 1.5)), 0, 0, 360, ped_col, -1, cv2.LINE_AA)
+        cv2.addWeighted(overlay, 0.20 if is_stationary else 0.30, canvas, 0.80 if is_stationary else 0.70, 0, canvas)
 
-        cv2.ellipse(canvas, (cx, cy), (foot_w, foot_h), 0, 0, 360, ring_col, 2, cv2.LINE_AA)
+        # Concentric rings with cardinal ticks
+        cv2.ellipse(canvas, (cx, cy), (ped_w, ped_h), 0, 0, 360, ped_col, 2, cv2.LINE_AA)
+        cv2.ellipse(canvas, (cx, cy), (int(ped_w * 0.5), int(ped_h * 0.5)), 0, 0, 360, (255, 255, 255), 1, cv2.LINE_AA)
+        cv2.line(canvas, (cx - ped_w - 3, cy), (cx - ped_w + 3, cy), ped_col, 2)
+        cv2.line(canvas, (cx + ped_w - 3, cy), (cx + ped_w + 3, cy), ped_col, 2)
+        cv2.line(canvas, (cx, cy - ped_h - 2), (cx, cy - ped_h + 2), ped_col, 2)
+        cv2.line(canvas, (cx, cy + ped_h - 2), (cx, cy + ped_h + 2), ped_col, 2)
         cv2.circle(canvas, (cx, cy), 3, (255, 255, 255), -1, cv2.LINE_AA)
 
-        # 2. Render Avatar Sprite
+        # 2. Render Authentic 3D Hologram Avatar (Large, crisp, prominent!)
+        target_h = 118  # High-tech prominent human figure
         if self.avatar_sprite is not None and self.avatar_sprite.ndim == 3 and self.avatar_sprite.shape[2] == 4:
-            target_h = 82  # Proportional human height in room
             aspect = self.avatar_sprite.shape[1] / float(self.avatar_sprite.shape[0])
-            target_w = max(14, int(target_h * aspect))
+            target_w = max(16, int(target_h * aspect))
 
             spr = cv2.resize(self.avatar_sprite, (target_w, target_h), interpolation=cv2.INTER_AREA)
 
@@ -532,10 +542,6 @@ class TrackerUI:
             spr_y0 = cy - target_h + 8
             spr_x1 = spr_x0 + target_w
             spr_y1 = spr_y0 + target_h
-
-            # Clip strictly inside the room box
-            rx1 = self.room_x0 + self.room_w
-            ry1 = self.room_y0 + self.room_h
 
             dest_x0 = max(self.room_x0, spr_x0)
             dest_y0 = max(self.room_y0, spr_y0)
@@ -553,13 +559,43 @@ class TrackerUI:
                 spr_alpha = spr_crop[:, :, 3].astype(float) / 255.0
 
                 if is_stationary:
-                    # Give stationary avatar a cooler locked cyan-blue thermal aura
                     spr_rgb = spr_rgb.copy()
-                    spr_rgb[:, :, 0] = np.clip(spr_rgb[:, :, 0].astype(float) * 1.25, 0, 255).astype(np.uint8)
+                    spr_rgb[:, :, 0] = np.clip(spr_rgb[:, :, 0].astype(float) * 1.18, 0, 255).astype(np.uint8)
 
                 roi = canvas[dest_y0:dest_y1, dest_x0:dest_x1]
                 for c in range(3):
                     roi[:, :, c] = (spr_rgb[:, :, c] * spr_alpha + roi[:, :, c] * (1.0 - spr_alpha)).astype(np.uint8)
+
+            # 3. Futuristic HUD Corner Reticle Brackets framing the human figure
+            bx0 = max(self.room_x0 + 2, spr_x0 - 6)
+            by0 = max(self.room_y0 + 2, spr_y0 - 4)
+            bx1 = min(rx1 - 2, spr_x1 + 6)
+            by1 = min(ry1 - 2, spr_y1 + 4)
+            b_col = COLOR_CYAN if is_stationary else (45, 205, 255)
+            blen = 9
+
+            # Corner lines
+            cv2.line(canvas, (bx0, by0), (bx0 + blen, by0), b_col, 2)
+            cv2.line(canvas, (bx0, by0), (bx0, by0 + blen), b_col, 2)
+            cv2.line(canvas, (bx1, by0), (bx1 - blen, by0), b_col, 2)
+            cv2.line(canvas, (bx1, by0), (bx1, by0 + blen), b_col, 2)
+            cv2.line(canvas, (bx0, by1), (bx0 + blen, by1), b_col, 2)
+            cv2.line(canvas, (bx0, by1), (bx0, by1 - blen), b_col, 2)
+            cv2.line(canvas, (bx1, by1), (bx1 - blen, by1), b_col, 2)
+            cv2.line(canvas, (bx1, by1), (bx1, by1 - blen), b_col, 2)
+
+            # 4. Floating Holographic Status Badge (Above the head)
+            tag_text = f"TARGET: ({norm_x:.2f}, {norm_y:.2f})" if not is_stationary else f"LOCKED: ({norm_x:.2f}, {norm_y:.2f})"
+            tag_y = max(self.room_y0 + 20, spr_y0 - 12)
+            (tw, th), _ = cv2.getTextSize(tag_text, cv2.FONT_HERSHEY_DUPLEX, 0.44, 1)
+            t_x0 = np.clip(cx - tw // 2 - 8, self.room_x0 + 4, rx1 - tw - 18)
+            t_x1 = t_x0 + tw + 16
+            t_y0 = tag_y - th - 6
+            t_y1 = tag_y + 4
+            cv2.rectangle(canvas, (t_x0, t_y0), (t_x1, t_y1), (18, 22, 32), -1)
+            cv2.rectangle(canvas, (t_x0, t_y0), (t_x1, t_y1), b_col, 1)
+            cv2.putText(canvas, tag_text, (t_x0 + 8, tag_y - 2),
+                        cv2.FONT_HERSHEY_DUPLEX, 0.44, TEXT_WHITE, 1, cv2.LINE_AA)
         else:
             self._draw_procedural_thermal_human(canvas, cx, cy, is_stationary)
 
@@ -724,14 +760,8 @@ class TrackerUI:
             cv2.line(canvas, (self.room_x0, pdy), (rx1, pdy), ch_col, 1)
             cv2.line(canvas, (pdx, self.room_y0), (pdx, ry1), ch_col, 1)
 
-            # Draw the thermal human figure instead of simple circle dot
-            self._draw_thermal_avatar(canvas, pdx, pdy, is_stationary, eng1.current_score)
-
-            # Coordinate label
-            tag = f"({x:.2f}, {y:.2f}) [STILL]" if is_stationary else f"({x:.2f}, {y:.2f})"
-            tag_col = COLOR_CYAN if is_stationary else TEXT_WHITE
-            cv2.putText(canvas, tag, (pdx + 16, pdy - 12),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.44, tag_col, 1, cv2.LINE_AA)
+            # Draw authentic 3D Holographic Avatar with HUD tracking
+            self._draw_thermal_avatar(canvas, pdx, pdy, is_stationary, eng1.current_score, norm_x=x, norm_y=y)
 
         # Room label
         cv2.putText(canvas, "ROOM (top-down view)", (self.room_x0 + 2, self.room_y0 - 8),
