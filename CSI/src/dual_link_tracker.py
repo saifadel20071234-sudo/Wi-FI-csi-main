@@ -835,6 +835,14 @@ class TrackerUI:
             bar2_col = COLOR_RED if eng2.in_beam else COLOR_TEAL
             cv2.rectangle(canvas, (hx, hy), (hx + fill2, hy + 10), bar2_col, -1)
             cv2.line(canvas, (hx + tmark, hy - 3), (hx + tmark, hy + 13), COLOR_YELLOW, 2)
+        elif port2 and port2 not in ("", "MISSING", "None"):
+            hline("  Score : --", TEXT_DARK)
+            hline("  RSSI  : --", TEXT_DARK, 0.44)
+            hline(f"  Port  : {port2}", TEXT_DARK, 0.40)
+            status_txt = "CALIBRATING..." if (eng2.calibrating and eng2.online) else "WAITING WIFI (zoz 2.4GHz)"
+            status_col = COLOR_YELLOW if eng2.online else COLOR_RED
+            hline(f"  Status: {status_txt}", status_col, 0.38)
+            cv2.rectangle(canvas, (hx, hy), (hx + bw_, hy + 10), GRID_COLOR, -1)
         else:
             hline("  Score : --", TEXT_DARK)
             hline("  RSSI  : --", TEXT_DARK, 0.44)
@@ -1052,7 +1060,7 @@ def main() -> int:
     # --- Setup UI ---
     ui: Optional[TrackerUI] = None
     if not args.no_gui:
-        ui = TrackerUI(title=f"WiFi CSI 2D Tracker — [{port1_label} | {port2_label}]")
+        ui = TrackerUI(title=f"WiFi CSI 2D Tracker - [{port1_label} | {port2_label}]")
     else:
         print(f">> Console mode. Threshold: {threshold}%. Press Ctrl+C to quit.\n")
 

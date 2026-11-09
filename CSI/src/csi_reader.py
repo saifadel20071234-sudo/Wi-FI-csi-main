@@ -111,17 +111,25 @@ class CSIReader:
             self._running = False
             return
 
-        try:
-            ser = serial.Serial(
-                port=self.port,
-                baudrate=self.baud,
-                bytesize=8,
-                parity="N",
-                stopbits=1,
-                timeout=self.timeout,
-            )
-        except Exception as exc:
-            self._error = f"cannot open {self.port}: {exc}"
+        ser = None
+        retries = 0
+        while not self._stop.is_set() and ser is None and retries < 8:
+            try:
+                ser = serial.Serial(
+                    port=self.port,
+                    baudrate=self.baud,
+                    bytesize=8,
+                    parity="N",
+                    stopbits=1,
+                    timeout=self.timeout,
+                )
+            except Exception as exc:
+                retries += 1
+                self._error = f"waiting for {self.port} ({retries}/8)..."
+                time.sleep(0.8)
+
+        if ser is None:
+            self._error = f"cannot open {self.port} (Access Denied or Not Found)"
             self._running = False
             return
 
