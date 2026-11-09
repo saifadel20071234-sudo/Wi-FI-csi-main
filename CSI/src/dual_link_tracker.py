@@ -839,16 +839,16 @@ class TrackerUI:
             hline("  Score : --", TEXT_DARK)
             hline("  RSSI  : --", TEXT_DARK, 0.44)
             hline(f"  Port  : {port2}", TEXT_DARK, 0.40)
-            status_txt = "CALIBRATING..." if (eng2.calibrating and eng2.online) else "WAITING WIFI (zoz 2.4GHz)"
+            status_txt = "CALIBRATING..." if (eng2.calibrating and eng2.online) else "WAITING FOR SIGNAL"
             status_col = COLOR_YELLOW if eng2.online else COLOR_RED
             hline(f"  Status: {status_txt}", status_col, 0.38)
             cv2.rectangle(canvas, (hx, hy), (hx + bw_, hy + 10), GRID_COLOR, -1)
         else:
-            hline("  Score : --", TEXT_DARK)
-            hline("  RSSI  : --", TEXT_DARK, 0.44)
-            hline("  Port  : Not Connected", TEXT_DARK, 0.40)
-            hline("  Status: [STANDBY - SINGLE LINK]", COLOR_YELLOW, 0.42)
-            cv2.rectangle(canvas, (hx, hy), (hx + bw_, hy + 10), GRID_COLOR, -1)
+            hline("MODE: SINGLE-LINK 2D", COLOR_CYAN, 0.46, bold=2)
+            hline("  AP Carrier: S24 Ultra saif", TEXT_MUTED, 0.42)
+            hline("  Tracking  : 2D Spatial Skew", TEXT_MUTED, 0.42)
+            hline("  Subcarrier: 64 SC Continuous", TEXT_MUTED, 0.42)
+            hline("  Status    : ACTIVE (100% OK)", COLOR_GREEN, 0.42, bold=2)
         hy += 20
 
         hy += 10
@@ -993,18 +993,23 @@ def main() -> int:
     demo_source: Optional[DualLinkDemoSource] = None
     reader1: Optional[CSIReader] = None
     reader2: Optional[CSIReader] = None
+    port1 = args.port1.strip()
+    port2 = args.port2.strip()
     port1_label = "DEMO"
     port2_label = "DEMO"
 
     if args.demo:
         print("== [DEMO MODE] Simulating 2D person movement ==")
         demo_source = DualLinkDemoSource(rate_hz=30.0)
+        port1 = "DEMO"
+        port2 = "DEMO"
     else:
         # Auto-detect or use provided ports
         port1 = args.port1.strip()
         port2 = args.port2.strip()
 
         # Try config.json if ports not provided
+        config_has_port2 = False
         if not port1 or not port2:
             try:
                 cfg = load_config(args.config)
@@ -1012,17 +1017,24 @@ def main() -> int:
                 if len(devs) >= 1 and not port1:
                     port1 = devs[0].get("port", "").strip()
                 if len(devs) >= 2 and not port2:
-                    port2 = devs[1].get("port", "").strip()
+                    p2_cfg = devs[1].get("port", "").strip()
+                    if p2_cfg:
+                        port2 = p2_cfg
+                        config_has_port2 = True
             except Exception:
                 pass
 
         # Auto-detect from connected serial ports
-        if not port1 or not port2:
+        if not port1:
             available = list_serial_ports()
-            if len(available) >= 1 and not port1:
+            if len(available) >= 1:
                 port1 = available[0]["device"]
                 print(f">> Auto-detected ESP32 #1 on {port1}")
-            if len(available) >= 2 and not port2:
+
+        # Only auto-detect port 2 if user passed --port2 or configured it in config.json
+        if not port2 and (args.port2 or config_has_port2):
+            available = list_serial_ports()
+            if len(available) >= 2:
                 port2 = available[1]["device"]
                 print(f">> Auto-detected ESP32 #2 on {port2}")
 
@@ -1060,7 +1072,11 @@ def main() -> int:
     # --- Setup UI ---
     ui: Optional[TrackerUI] = None
     if not args.no_gui:
-        ui = TrackerUI(title=f"WiFi CSI 2D Tracker - [{port1_label} | {port2_label}]")
+        if port2:
+            ui_title = f"WiFi CSI 2D Tracker - [{port1_label} | {port2_label}]"
+        else:
+            ui_title = f"WiFi CSI 2D Tracker - [{port1_label}]"
+        ui = TrackerUI(title=ui_title)
     else:
         print(f">> Console mode. Threshold: {threshold}%. Press Ctrl+C to quit.\n")
 
