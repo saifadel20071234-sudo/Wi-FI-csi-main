@@ -506,31 +506,18 @@ class TrackerUI:
         norm_x: float = 0.5,
         norm_y: float = 0.5,
     ) -> None:
-        """Renders the authentic 3D holographic wireframe human avatar with futuristic HUD radar."""
+        """Renders ONLY the authentic FLIR infrared thermal human heat figure with no clutter."""
         rx1 = self.room_x0 + self.room_w
         ry1 = self.room_y0 + self.room_h
 
-        # 1. Holographic Ground Pedestal under feet at (cx, cy)
-        ped_col = COLOR_CYAN if is_stationary else (50, 220, 255)
-        ped_w = 34
-        ped_h = 13
-
-        # Soft radar floor halo
+        # 1. Soft organic thermal foot-contact glow on the floor
+        foot_glow_col = (20, 60, 220) if not is_stationary else (120, 80, 20)
         overlay = canvas.copy()
-        cv2.ellipse(overlay, (cx, cy), (int(ped_w * 1.5), int(ped_h * 1.5)), 0, 0, 360, ped_col, -1, cv2.LINE_AA)
-        cv2.addWeighted(overlay, 0.20 if is_stationary else 0.30, canvas, 0.80 if is_stationary else 0.70, 0, canvas)
+        cv2.ellipse(overlay, (cx, cy + 2), (22, 8), 0, 0, 360, foot_glow_col, -1, cv2.LINE_AA)
+        cv2.addWeighted(overlay, 0.35, canvas, 0.65, 0, canvas)
 
-        # Concentric rings with cardinal ticks
-        cv2.ellipse(canvas, (cx, cy), (ped_w, ped_h), 0, 0, 360, ped_col, 2, cv2.LINE_AA)
-        cv2.ellipse(canvas, (cx, cy), (int(ped_w * 0.5), int(ped_h * 0.5)), 0, 0, 360, (255, 255, 255), 1, cv2.LINE_AA)
-        cv2.line(canvas, (cx - ped_w - 3, cy), (cx - ped_w + 3, cy), ped_col, 2)
-        cv2.line(canvas, (cx + ped_w - 3, cy), (cx + ped_w + 3, cy), ped_col, 2)
-        cv2.line(canvas, (cx, cy - ped_h - 2), (cx, cy - ped_h + 2), ped_col, 2)
-        cv2.line(canvas, (cx, cy + ped_h - 2), (cx, cy + ped_h + 2), ped_col, 2)
-        cv2.circle(canvas, (cx, cy), 3, (255, 255, 255), -1, cv2.LINE_AA)
-
-        # 2. Render Authentic 3D Hologram Avatar (Large, crisp, prominent!)
-        target_h = 118  # High-tech prominent human figure
+        # 2. Render Pure Thermal Human Avatar
+        target_h = 120  # High-definition prominent thermal human body
         if self.avatar_sprite is not None and self.avatar_sprite.ndim == 3 and self.avatar_sprite.shape[2] == 4:
             aspect = self.avatar_sprite.shape[1] / float(self.avatar_sprite.shape[0])
             target_w = max(16, int(target_h * aspect))
@@ -539,7 +526,7 @@ class TrackerUI:
 
             # Feet stand at (cx, cy)
             spr_x0 = cx - target_w // 2
-            spr_y0 = cy - target_h + 8
+            spr_y0 = cy - target_h + 10
             spr_x1 = spr_x0 + target_w
             spr_y1 = spr_y0 + target_h
 
@@ -558,44 +545,9 @@ class TrackerUI:
                 spr_rgb = spr_crop[:, :, :3]
                 spr_alpha = spr_crop[:, :, 3].astype(float) / 255.0
 
-                if is_stationary:
-                    spr_rgb = spr_rgb.copy()
-                    spr_rgb[:, :, 0] = np.clip(spr_rgb[:, :, 0].astype(float) * 1.18, 0, 255).astype(np.uint8)
-
                 roi = canvas[dest_y0:dest_y1, dest_x0:dest_x1]
                 for c in range(3):
                     roi[:, :, c] = (spr_rgb[:, :, c] * spr_alpha + roi[:, :, c] * (1.0 - spr_alpha)).astype(np.uint8)
-
-            # 3. Futuristic HUD Corner Reticle Brackets framing the human figure
-            bx0 = max(self.room_x0 + 2, spr_x0 - 6)
-            by0 = max(self.room_y0 + 2, spr_y0 - 4)
-            bx1 = min(rx1 - 2, spr_x1 + 6)
-            by1 = min(ry1 - 2, spr_y1 + 4)
-            b_col = COLOR_CYAN if is_stationary else (45, 205, 255)
-            blen = 9
-
-            # Corner lines
-            cv2.line(canvas, (bx0, by0), (bx0 + blen, by0), b_col, 2)
-            cv2.line(canvas, (bx0, by0), (bx0, by0 + blen), b_col, 2)
-            cv2.line(canvas, (bx1, by0), (bx1 - blen, by0), b_col, 2)
-            cv2.line(canvas, (bx1, by0), (bx1, by0 + blen), b_col, 2)
-            cv2.line(canvas, (bx0, by1), (bx0 + blen, by1), b_col, 2)
-            cv2.line(canvas, (bx0, by1), (bx0, by1 - blen), b_col, 2)
-            cv2.line(canvas, (bx1, by1), (bx1 - blen, by1), b_col, 2)
-            cv2.line(canvas, (bx1, by1), (bx1, by1 - blen), b_col, 2)
-
-            # 4. Floating Holographic Status Badge (Above the head)
-            tag_text = f"TARGET: ({norm_x:.2f}, {norm_y:.2f})" if not is_stationary else f"LOCKED: ({norm_x:.2f}, {norm_y:.2f})"
-            tag_y = max(self.room_y0 + 20, spr_y0 - 12)
-            (tw, th), _ = cv2.getTextSize(tag_text, cv2.FONT_HERSHEY_DUPLEX, 0.44, 1)
-            t_x0 = np.clip(cx - tw // 2 - 8, self.room_x0 + 4, rx1 - tw - 18)
-            t_x1 = t_x0 + tw + 16
-            t_y0 = tag_y - th - 6
-            t_y1 = tag_y + 4
-            cv2.rectangle(canvas, (t_x0, t_y0), (t_x1, t_y1), (18, 22, 32), -1)
-            cv2.rectangle(canvas, (t_x0, t_y0), (t_x1, t_y1), b_col, 1)
-            cv2.putText(canvas, tag_text, (t_x0 + 8, tag_y - 2),
-                        cv2.FONT_HERSHEY_DUPLEX, 0.44, TEXT_WHITE, 1, cv2.LINE_AA)
         else:
             self._draw_procedural_thermal_human(canvas, cx, cy, is_stationary)
 
@@ -741,26 +693,10 @@ class TrackerUI:
             cv2.putText(canvas, f"Link2: {s2_pct}%", (self.room_x0 + 4, self.room_y0 + 32),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.42, s2_col, 1, cv2.LINE_AA)
 
-        # Person trail
-        if len(self.trail) >= 2:
-            pts = list(self.trail)
-            for i in range(1, len(pts)):
-                alpha = i / len(pts)
-                col = (int(60 * alpha), int(190 * alpha), int(80 * alpha))
-                cv2.line(canvas, pts[i - 1], pts[i], col, 2, cv2.LINE_AA)
-
-        # Person Thermal Avatar (Stays visible and locked when stationary!)
+        # Clean Pure Thermal Human Rendering (No green scribbles, no crosshairs!)
         if presence:
             pdx, pdy = self.to_px(x, y)
-            if not is_stationary:
-                self.trail.append((pdx, pdy))
-
-            # Crosshairs on floor
-            ch_col = (70, 110, 120) if is_stationary else (50, 100, 55)
-            cv2.line(canvas, (self.room_x0, pdy), (rx1, pdy), ch_col, 1)
-            cv2.line(canvas, (pdx, self.room_y0), (pdx, ry1), ch_col, 1)
-
-            # Draw authentic 3D Holographic Avatar with HUD tracking
+            # Draw ONLY the radiant thermal human heat figure
             self._draw_thermal_avatar(canvas, pdx, pdy, is_stationary, eng1.current_score, norm_x=x, norm_y=y)
 
         # Room label
