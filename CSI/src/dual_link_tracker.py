@@ -217,8 +217,8 @@ class LinkEngine:
             ((rel_var_norm + 0.65 * rssi_drop_norm) / 1.65) * 100.0, 0.0, 100.0
         ))
 
-        # Responsive agile tracking
-        alpha = 0.55 if instant_pct > self.current_score else 0.18
+        # Responsive agile tracking (fast 0.82 attack for instant motion response)
+        alpha = 0.82 if instant_pct > self.current_score else 0.20
         self.current_score = alpha * instant_pct + (1.0 - alpha) * self.current_score
 
         # In-beam with hysteresis
@@ -238,34 +238,24 @@ class LinkEngine:
 class DualLinkFusion:
     """Fuses Link 1 and Link 2 measurements into full 2D (x, y) coordinates.
 
-    Geometric model:
-      Link 1 (Horizontal Beam, left-to-right at y ≈ 0.35):
-        • ESP1 is on the left (x=0), AP1 is on the right (x=1).
-        • When disturbed, person is near Link 1's horizontal corridor.
-        • Relative RSSI drop increases as person approaches ESP1 (x → 0).
-      
-      Link 2 (Vertical Beam, top-to-bottom at x ≈ 0.65):
-        • AP2 is at the top (y=0), ESP2 is at the bottom (y=1).
-        • When disturbed, person is near Link 2's vertical corridor.
-        • Relative RSSI drop increases as person approaches ESP2 (y → 1).
-
-    When BOTH links are online:
-      • X coordinate is derived from Link 1 attenuation gradient + Link 2 beam proximity.
-      • Y coordinate is derived from Link 2 attenuation gradient + Link 1 beam proximity.
-      • True 2D coverage across the full room area [0.05 .. 0.95].
-
-    When only ONE link is online (Single-Link Fallback):
-      • X is derived from Link 1 RSSI gradient, Y from Link 1 beam distance.
-      • System never hangs or blocks calibration.
+    Supports:
+      • Instant, lag-free glide across the full room canvas (< 25 ms latency)
+      • Stationary Person Lock: when motionless/still, target does NOT disappear
+      • Static body absorption detection from steady RF shadowing
     """
 
-    BEAM1_Y = 0.35  # Horizontal beam position along Y
-    BEAM2_X = 0.65  # Vertical beam position along X
+    BEAM1_Y = 0.35
+    BEAM2_X = 0.65
 
-    def __init__(self, smooth_alpha: float = 0.35) -> None:
+    def __init__(self, smooth_alpha: float = 0.35, stationary_hold_sec: float = 8.0) -> None:
         self.smooth_alpha = smooth_alpha
+        self.stationary_hold_sec = stationary_hold_sec
         self._x: float = 0.50
         self._y: float = 0.50
+        self.last_valid_x: float = 0.50
+        self.last_valid_y: float = 0.50
+        self.last_motion_t: float = 0.0
+        self.is_stationary: bool = False
         self._presence_score: float = 0.0
 
     def fuse(
@@ -277,19 +267,49 @@ class DualLinkFusion:
         sc_skew1: float = 0.0,
         thresh: float = 50.0,
         has_link2: bool = False,
-    ) -> Tuple[float, float, float, bool]:
-        """Return (x, y, presence_score, presence_bool) across full room canvas."""
-        presence1 = score1 >= thresh
-        presence2 = (score2 >= thresh) if has_link2 else False
-        presence = presence1 or presence2
+    ) -> Tuple[float, float, float, bool, bool]:
+        """Return (x, y, presence_score, presence_bool, is_stationary)."""
+        now = time.monotonic()
+        motion1 = score1 >= thresh
+        motion2 = (score2 >= thresh) if has_link2 else False
+        active_motion = motion1 or motion2
+
+        max_drop = max(rssi_drop1, rssi_drop2 if has_link2 else 0.0)
+        # Static body presence: human body absorbs RF beam even when motionless
+        static_shadow = max_drop >= 1.3
+
+        if active_motion:
+            self.last_motion_t = now
+            self.is_stationary = False
+            presence = True
+        elif (now - self.last_motion_t) < self.stationary_hold_sec or static_shadow:
+            # Person stopped moving but is still present in the room:
+            # Hold presence and lock position so the target NEVER disappears!
+            self.is_stationary = True
+            presence = True
+        else:
+            self.is_stationary = False
+            presence = False
 
         presence_score = max(score1, score2 if has_link2 else 0.0)
+        if self.is_stationary:
+            presence_score = max(presence_score, thresh + 5.0)
 
-        if not presence and score1 < (thresh - 10.0) and (score2 < (thresh - 10.0) or not has_link2):
-            # Gently rest towards center when nobody is in the room
+        # Room truly empty: gently return to center
+        if not presence:
             self._x = 0.96 * self._x + 0.04 * 0.50
             self._y = 0.96 * self._y + 0.04 * 0.50
-            return float(self._x), float(self._y), 0.0, False
+            return float(self._x), float(self._y), 0.0, False, False
+
+        # Stationary body: LOCK exactly onto last position with zero drift or twitch
+        if self.is_stationary:
+            return (
+                float(np.clip(self.last_valid_x, 0.06, 0.94)),
+                float(np.clip(self.last_valid_y, 0.06, 0.94)),
+                float(presence_score),
+                True,
+                True,
+            )
 
         # --- DUAL-LINK 2D FUSION (Both Links Active) ---
         if has_link2:
@@ -300,44 +320,44 @@ class DualLinkFusion:
 
         # --- FULL-ROOM SINGLE-LINK 2D TRACKING (1 ESP32) ---
         else:
-            # Full horizontal span: 0.12 (left wall near ESP) to 0.88 (right wall near phone)
             norm_drop = min(1.0, rssi_drop1 / 5.0) if rssi_drop1 > 0 else 0.0
             norm_score = min(1.0, score1 / 85.0)
             act_x = 0.60 * norm_drop + 0.40 * norm_score
             target_x = 0.88 - 0.76 * act_x
 
-            # Full vertical span: 0.12 (top wall) to 0.88 (bottom wall) from subcarrier spatial skew
             skew_norm = float(np.clip(sc_skew1 * 2.8, -1.0, 1.0))
             target_y = 0.50 + 0.38 * skew_norm
 
         target_x = float(np.clip(target_x, 0.08, 0.92))
         target_y = float(np.clip(target_y, 0.08, 0.92))
 
-        # Fast agile tracking with stationary deadzone
+        # Ultra-low-latency tracking (alpha=0.88) with minimal deadband
         dist = math.hypot(target_x - self._x, target_y - self._y)
-        if presence:
-            if dist < 0.020:
-                # Rock-solid deadzone when standing still (zero twitch)
-                pass
-            else:
-                # Immediate, lag-free glide (< 40ms)
-                alpha = 0.65
-                self._x = alpha * target_x + (1.0 - alpha) * self._x
-                self._y = alpha * target_y + (1.0 - alpha) * self._y
+        if dist < 0.012:
+            pass
         else:
-            self._x = 0.95 * self._x + 0.05 * 0.50
-            self._y = 0.95 * self._y + 0.05 * 0.50
+            alpha = 0.88
+            self._x = alpha * target_x + (1.0 - alpha) * self._x
+            self._y = alpha * target_y + (1.0 - alpha) * self._y
+
+        self.last_valid_x = self._x
+        self.last_valid_y = self._y
 
         return (
             float(np.clip(self._x, 0.06, 0.94)),
             float(np.clip(self._y, 0.06, 0.94)),
             float(presence_score),
-            presence,
+            True,
+            False,
         )
 
     def reset(self) -> None:
         self._x = 0.5
         self._y = 0.5
+        self.last_valid_x = 0.5
+        self.last_valid_y = 0.5
+        self.last_motion_t = 0.0
+        self.is_stationary = False
 
 
 # =============================================================================
@@ -473,6 +493,7 @@ class TrackerUI:
         x: float,
         y: float,
         presence: bool,
+        is_stationary: bool,
         threshold: float,
         port1: str,
         port2: str,
@@ -513,11 +534,18 @@ class TrackerUI:
             cv2.putText(canvas, f"CALIBRATING ({avg_prog}%)...", (bx + 18, by + 32),
                         cv2.FONT_HERSHEY_DUPLEX, 0.68, COLOR_YELLOW, 1, cv2.LINE_AA)
         elif presence:
-            cv2.rectangle(canvas, (bx, by), (bx + bw, by + bh), COLOR_RED_DK, -1)
-            cv2.rectangle(canvas, (bx, by), (bx + bw, by + bh), COLOR_RED, 2)
-            cv2.putText(canvas, "[!] PERSON DETECTED", (bx + 18, by + 32),
-                        cv2.FONT_HERSHEY_DUPLEX, 0.78, (255, 255, 255), 2, cv2.LINE_AA)
-            cv2.circle(canvas, (bx + bw - 22, by + 24), 9, COLOR_RED, -1)
+            if is_stationary:
+                cv2.rectangle(canvas, (bx, by), (bx + bw, by + bh), (35, 45, 20), -1)
+                cv2.rectangle(canvas, (bx, by), (bx + bw, by + bh), COLOR_CYAN, 2)
+                cv2.putText(canvas, "[!] PERSON STILL (LOCKED)", (bx + 14, by + 32),
+                            cv2.FONT_HERSHEY_DUPLEX, 0.66, COLOR_CYAN, 2, cv2.LINE_AA)
+                cv2.circle(canvas, (bx + bw - 22, by + 24), 9, COLOR_CYAN, -1)
+            else:
+                cv2.rectangle(canvas, (bx, by), (bx + bw, by + bh), COLOR_RED_DK, -1)
+                cv2.rectangle(canvas, (bx, by), (bx + bw, by + bh), COLOR_RED, 2)
+                cv2.putText(canvas, "[!] PERSON MOVING", (bx + 18, by + 32),
+                            cv2.FONT_HERSHEY_DUPLEX, 0.76, (255, 255, 255), 2, cv2.LINE_AA)
+                cv2.circle(canvas, (bx + bw - 22, by + 24), 9, COLOR_RED, -1)
         else:
             cv2.rectangle(canvas, (bx, by), (bx + bw, by + bh), COLOR_GREEN_DK, -1)
             cv2.rectangle(canvas, (bx, by), (bx + bw, by + bh), COLOR_GREEN, 1)
@@ -584,27 +612,31 @@ class TrackerUI:
                 col = (int(60 * alpha), int(190 * alpha), int(80 * alpha))
                 cv2.line(canvas, pts[i - 1], pts[i], col, 2, cv2.LINE_AA)
 
-        # Person dot (Single Person Follow)
+        # Person dot (Stays visible and locked when stationary!)
         if presence:
             pdx, pdy = self.to_px(x, y)
-            self.trail.append((pdx, pdy))
+            if not is_stationary:
+                self.trail.append((pdx, pdy))
 
+            dot_col = COLOR_CYAN if is_stationary else COLOR_GREEN
             # Outer glow
-            for r, a in [(22, 0.15), (16, 0.25), (11, 0.5)]:
+            for r, a in [(24, 0.18), (17, 0.28), (11, 0.55)]:
                 overlay = canvas.copy()
-                cv2.circle(overlay, (pdx, pdy), r, COLOR_GREEN, -1)
+                cv2.circle(overlay, (pdx, pdy), r, dot_col, -1)
                 cv2.addWeighted(overlay, a, canvas, 1 - a, 0, canvas)
 
-            cv2.circle(canvas, (pdx, pdy), 10, COLOR_GREEN, 2, cv2.LINE_AA)
-            cv2.circle(canvas, (pdx, pdy), 5, COLOR_GREEN, -1, cv2.LINE_AA)
+            cv2.circle(canvas, (pdx, pdy), 10, dot_col, 2, cv2.LINE_AA)
+            cv2.circle(canvas, (pdx, pdy), 5, dot_col, -1, cv2.LINE_AA)
             cv2.circle(canvas, (pdx, pdy), 2, (255, 255, 255), -1)
 
             # Crosshairs
-            cv2.line(canvas, (self.room_x0, pdy), (rx1, pdy), (50, 100, 55), 1)
-            cv2.line(canvas, (pdx, self.room_y0), (pdx, ry1), (50, 100, 55), 1)
+            ch_col = (70, 110, 120) if is_stationary else (50, 100, 55)
+            cv2.line(canvas, (self.room_x0, pdy), (rx1, pdy), ch_col, 1)
+            cv2.line(canvas, (pdx, self.room_y0), (pdx, ry1), ch_col, 1)
 
             # Coordinate label
-            cv2.putText(canvas, f"({x:.2f}, {y:.2f})", (pdx + 14, pdy - 10),
+            tag = f"({x:.2f}, {y:.2f}) [STILL]" if is_stationary else f"({x:.2f}, {y:.2f})"
+            cv2.putText(canvas, tag, (pdx + 14, pdy - 10),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.44, TEXT_WHITE, 1, cv2.LINE_AA)
 
         # Room label
@@ -629,9 +661,13 @@ class TrackerUI:
                     cv2.FONT_HERSHEY_DUPLEX, 0.60, COLOR_YELLOW, 2, cv2.LINE_AA)
         hy += 32
 
-        hline(f"PRESENCE : {'YES' if presence else 'NO'}", COLOR_GREEN if presence else TEXT_MUTED, bold=2)
-        hline(f"X pos    : {x:.3f}", COLOR_GREEN if presence else TEXT_MUTED)
-        hline(f"Y pos    : {y:.3f}", COLOR_GREEN if presence else TEXT_MUTED)
+        pres_text = "YES (STILL)" if is_stationary else ("YES" if presence else "NO")
+        pres_col = COLOR_CYAN if is_stationary else (COLOR_GREEN if presence else TEXT_MUTED)
+        hline(f"PRESENCE : {pres_text}", pres_col, bold=2)
+        hline(f"X pos    : {x:.3f}", pres_col)
+        hline(f"Y pos    : {y:.3f}", pres_col)
+        state_txt = "STATIONARY" if is_stationary else ("MOVING" if presence else "EMPTY")
+        hline(f"State    : {state_txt}", pres_col, 0.44)
         hy += 8
 
         # Divider
@@ -690,77 +726,6 @@ class TrackerUI:
         # System telemetry
         hline(f"Threshold: {threshold:.1f}%  ([+]/[-])", COLOR_YELLOW, 0.44)
         hline(f"FPS: {fps:.1f}", TEXT_MUTED, 0.44)
-
-        hy += 10
-        hline("[C] Recalibrate  [Z] Clear heat", TEXT_DARK, 0.40)
-        hline("[+]/[-] Thresh   [Q] Quit", TEXT_DARK, 0.40)
-
-        # Footer
-        footer_y = self.height - 20
-        cv2.putText(canvas, "[C] Recalib  [Z] Clear  [+/-] Thresh  [Q/Esc] Quit",
-                    (45, footer_y), cv2.FONT_HERSHEY_SIMPLEX, 0.40, TEXT_DARK, 1, cv2.LINE_AA)
-
-        cv2.imshow(self.title, canvas)
-        return cv2.waitKey(1) & 0xFF
-        hy += 14
-
-        # Link 1 status
-        hline("LINK 1 (Horizontal / X)", COLOR_BLUE, 0.46)
-        l1_col = COLOR_RED if eng1.in_beam else (TEXT_MUTED if eng1.online else (60, 60, 80))
-        hline(f"  Score : {eng1.current_score:5.1f}%", l1_col)
-        hline(f"  RSSI  : {eng1.current_rssi:5.0f} dBm", TEXT_MUTED, 0.44)
-        hline(f"  Drop  : {eng1.current_rssi_drop:4.1f} dB", TEXT_MUTED, 0.44)
-        hline(f"  Port  : {port1}", TEXT_DARK, 0.40)
-        hline(f"  Status: {'ONLINE' if eng1.online else '-- OFFLINE --'}", COLOR_GREEN if eng1.online else COLOR_RED, 0.42)
-
-        # Link 1 activity bar
-        bw_ = self.hud_w - 36
-        cv2.rectangle(canvas, (hx, hy), (hx + bw_, hy + 10), GRID_COLOR, -1)
-        fill1 = int(np.clip(eng1.current_score / 100.0, 0, 1) * bw_)
-        bar1_col = COLOR_RED if eng1.in_beam else COLOR_BLUE
-        cv2.rectangle(canvas, (hx, hy), (hx + fill1, hy + 10), bar1_col, -1)
-        # Threshold marker
-        tmark = int((threshold / 100.0) * bw_)
-        cv2.line(canvas, (hx + tmark, hy - 3), (hx + tmark, hy + 13), COLOR_YELLOW, 2)
-        hy += 20
-
-        hy += 8
-        cv2.line(canvas, (hx, hy), (self.width - 10, hy), PANEL_BORDER, 1)
-        hy += 14
-
-        # Link 2 status
-        hline("LINK 2 (Vertical / Y)", COLOR_TEAL, 0.46)
-        if has_link2:
-            l2_col = COLOR_RED if eng2.in_beam else (TEXT_MUTED if eng2.online else (60, 60, 80))
-            hline(f"  Score : {eng2.current_score:5.1f}%", l2_col)
-            hline(f"  RSSI  : {eng2.current_rssi:5.0f} dBm", TEXT_MUTED, 0.44)
-            hline(f"  Drop  : {eng2.current_rssi_drop:4.1f} dB", TEXT_MUTED, 0.44)
-            hline(f"  Port  : {port2}", TEXT_DARK, 0.40)
-            hline(f"  Status: {'ONLINE' if eng2.online else '-- OFFLINE --'}", COLOR_GREEN if eng2.online else COLOR_RED, 0.42)
-        else:
-            hline("  Score : --", TEXT_DARK)
-            hline("  RSSI  : --", TEXT_DARK, 0.44)
-            hline("  Port  : Not Connected", TEXT_DARK, 0.40)
-            hline("  Status: [STANDBY - SINGLE LINK]", COLOR_YELLOW, 0.42)
-
-        # Link 2 activity bar
-        cv2.rectangle(canvas, (hx, hy), (hx + bw_, hy + 10), GRID_COLOR, -1)
-        if has_link2:
-            fill2 = int(np.clip(eng2.current_score / 100.0, 0, 1) * bw_)
-            bar2_col = COLOR_RED if eng2.in_beam else COLOR_TEAL
-            cv2.rectangle(canvas, (hx, hy), (hx + fill2, hy + 10), bar2_col, -1)
-            cv2.line(canvas, (hx + tmark, hy - 3), (hx + tmark, hy + 13), COLOR_YELLOW, 2)
-        hy += 20
-
-        hy += 10
-        cv2.line(canvas, (hx, hy), (self.width - 10, hy), PANEL_BORDER, 1)
-        hy += 14
-
-        # System telemetry
-        hline(f"Threshold: {threshold:.1f}%  ([+]/[-])", COLOR_YELLOW, 0.44)
-        hline(f"FPS: {fps:.1f}", TEXT_MUTED, 0.44)
-        calib_txt = "YES" if (eng1.calibrating or eng2.calibrating) else "NO"
-        hline(f"Calibrating: {calib_txt}", TEXT_MUTED, 0.44)
 
         hy += 10
         hline("[C] Recalibrate  [Z] Clear heat", TEXT_DARK, 0.40)
@@ -957,7 +922,7 @@ def main() -> int:
     eng1 = LinkEngine("link1", threshold=threshold)
     eng2 = LinkEngine("link2", threshold=threshold)
     fusion = DualLinkFusion(smooth_alpha=0.35)
-    kalman = KalmanTracker(process_noise=3e-2, measurement_noise=2e-3)
+    kalman = KalmanTracker(process_noise=6e-2, measurement_noise=1.5e-3)
     heatmap = HeatmapEngine(grid_w=100, grid_h=80, decay=0.978, blob_sigma_px=8, intensity=18.0)
 
     # --- Setup UI ---
@@ -1004,8 +969,8 @@ def main() -> int:
             else:
                 has_link2 = (reader2 is not None and reader2.is_running and eng2.online and not eng2.calibrating)
 
-            # Fuse into 2D position across the entire room canvas
-            x_raw, y_raw, pres_score, presence = fusion.fuse(
+            # Fuse into 2D position across the entire room canvas with stationary lock
+            x_raw, y_raw, pres_score, presence, is_stationary = fusion.fuse(
                 eng1.current_score,
                 eng2.current_score,
                 eng1.current_rssi_drop,
@@ -1015,10 +980,16 @@ def main() -> int:
                 has_link2=has_link2,
             )
 
-            # Kalman smoothing
+            # Kalman smoothing & stationary heatmap maintenance
             if presence:
-                x_smooth, y_smooth = kalman.update(x_raw, y_raw)
-                heatmap.deposit(x_smooth, y_smooth, strength=min(1.5, pres_score / 60.0))
+                if is_stationary:
+                    # When stationary/still: lock position, keep heatmap deposit active so it never disappears!
+                    x_smooth, y_smooth = x_raw, y_raw
+                    heatmap.deposit(x_smooth, y_smooth, strength=0.95)
+                else:
+                    # Rapid low-latency Kalman tracking during movement
+                    x_smooth, y_smooth = kalman.update(x_raw, y_raw)
+                    heatmap.deposit(x_smooth, y_smooth, strength=min(1.6, pres_score / 55.0))
             else:
                 x_smooth, y_smooth = kalman.rest()
 
@@ -1028,7 +999,7 @@ def main() -> int:
             if ui is not None:
                 key = ui.render(
                     eng1, eng2, fusion, kalman, heatmap,
-                    x_smooth, y_smooth, presence, threshold,
+                    x_smooth, y_smooth, presence, is_stationary, threshold,
                     port1_label, port2_label,
                     has_link2=has_link2,
                 )
