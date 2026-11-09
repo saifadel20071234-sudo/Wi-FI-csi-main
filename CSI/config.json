@@ -20,7 +20,7 @@
     {
       "id": "esp32_v",
       "label": "ESP32 #2 (Vertical Link)",
-      "port": "",
+      "port": "COM9",
       "x": 0.65,
       "y": 0.9
     }

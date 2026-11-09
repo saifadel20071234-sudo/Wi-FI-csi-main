@@ -1,7 +1,7 @@
 /*
  * WiFi CSI Presence Sensing - ESP32 #2 Firmware (Vertical Link / Y-axis)
  *
- * Dedicated to Link 2: Connects to Hotspot [zoz]
+ * Dedicated to Link 2: Connects to Hotspot [S24 Ultra saif_EXT]
  * Serial Baud: 921600
  */
 
@@ -14,10 +14,10 @@
 #include "rom/ets_sys.h"
 
 // -----------------------------------------------------------------------------
-// WiFi Credentials for Hotspot #2 (zoz)
+// WiFi Credentials for Access Point #2 (S24 Ultra saif_EXT)
 // -----------------------------------------------------------------------------
-const char* PRIMARY_SSID = "zoz";
-const char* PRIMARY_PASS = "100200300";
+const char* PRIMARY_SSID = "S24 Ultra saif_EXT";
+const char* PRIMARY_PASS = "123456789ss";
 
 // 25 Hz: optimal motion capture
 #define CONFIG_SEND_FREQUENCY 25
@@ -152,7 +152,7 @@ static void scan_and_report() {
             }
         }
         if (!found_zoz) {
-            Serial.println("   [!] ALERT: Network [zoz] NOT found in 2.4GHz scan!");
+            Serial.println("   [!] ALERT: Network [S24 Ultra saif_EXT] NOT found in 2.4GHz scan!");
             Serial.println("   -> Your phone hotspot is likely set to 5GHz! Change it to 2.4GHz.");
         }
     }
@@ -182,7 +182,7 @@ void onWiFiEvent(WiFiEvent_t event, WiFiEventInfo_t info) {
             stop_ping();
 
             if (reason == 201) {
-                Serial.println("  -> Reason 201: [zoz] SSID not found in 2.4GHz band!");
+                Serial.println("  -> Reason 201: [S24 Ultra saif_EXT] SSID not found in 2.4GHz band!");
                 scan_and_report();
             } else if (reason == 36 || reason == 15 || reason == 202) {
                 Serial.println("  -> Reason 36/15: Auth handshake failed (WPA3 / PMF issue).");
@@ -203,7 +203,7 @@ void setup() {
     delay(1000);
     Serial.println("\n==========================================");
     Serial.println("   WiFi CSI Presence - ESP32 #2 (Link 2)");
-    Serial.println("   Connecting exclusively to: [zoz]");
+    Serial.println("   Connecting exclusively to: [S24 Ultra saif_EXT]");
     Serial.println("==========================================");
 
     WiFi.onEvent(onWiFiEvent);
