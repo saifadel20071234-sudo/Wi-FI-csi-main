@@ -15,17 +15,17 @@
 #include "rom/ets_sys.h"
 
 // -----------------------------------------------------------------------------
-// WiFi Credentials (Router: venom is Primary, Hotspot is Backup)
+// WiFi Credentials (Mobile Hotspot is Primary)
 // -----------------------------------------------------------------------------
-const char* PRIMARY_SSID = "venom";
-const char* PRIMARY_PASS = "12345678";
+const char* PRIMARY_SSID = "S24 Ultra saif";
+const char* PRIMARY_PASS = "123456789ss";
 
-// Backup mobile hotspot
-const char* BACKUP_SSID  = "S24 Ultra saif";
-const char* BACKUP_PASS  = "123456789ss";
+// Backup
+const char* BACKUP_SSID  = "venom";
+const char* BACKUP_PASS  = "12345678";
 
-// 25 Hz is the sweet spot: fast motion capture, zero rate-limit drops
-#define CONFIG_SEND_FREQUENCY 25
+// 20 Hz is optimal for phone hotspot stability (avoids ping flood throttling)
+#define CONFIG_SEND_FREQUENCY 20
 
 static uint32_t s_count = 0;
 static esp_ping_handle_t ping_handle = NULL;
