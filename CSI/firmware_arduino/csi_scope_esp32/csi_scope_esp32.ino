@@ -15,14 +15,14 @@
 #include "rom/ets_sys.h"
 
 // -----------------------------------------------------------------------------
-// WiFi Credentials (Supports Hotspot or Router: venom)
+// WiFi Credentials (Mobile Hotspot is Primary: S24 Ultra saif)
 // -----------------------------------------------------------------------------
-const char* PRIMARY_SSID = "venom";
-const char* PRIMARY_PASS = "12345678";
+const char* PRIMARY_SSID = "S24 Ultra saif";
+const char* PRIMARY_PASS = "123456789ss";
 
-// Backup mobile hotspot
-const char* BACKUP_SSID  = "S24 Ultra saif";
-const char* BACKUP_PASS  = "123456789ss";
+// Backup router: venom
+const char* BACKUP_SSID  = "venom";
+const char* BACKUP_PASS  = "12345678";
 
 // 25 Hz is the sweet spot: fast motion capture, zero rate-limit drops
 #define CONFIG_SEND_FREQUENCY 25
@@ -193,22 +193,12 @@ void setup() {
 }
 
 void loop() {
-    // Keep WiFi alive: retry connection if lost, alternating networks
+    // Keep WiFi alive: status log every 5 seconds if not connected
     if (WiFi.status() != WL_CONNECTED) {
         static unsigned long last_retry = 0;
-        static int fail_count = 0;
-        if (millis() - last_retry > 4000) {
+        if (millis() - last_retry > 5000) {
             last_retry = millis();
-            fail_count++;
-            if (fail_count % 2 == 0) {
-                using_backup = !using_backup;
-            }
-            const char* ssid = using_backup ? BACKUP_SSID : PRIMARY_SSID;
-            const char* pass = using_backup ? BACKUP_PASS  : PRIMARY_PASS;
-            Serial.printf(">> Retrying connection to [%s] ...\n", ssid);
-            WiFi.disconnect();
-            delay(100);
-            WiFi.begin(ssid, pass);
+            Serial.printf(">> Waiting for WiFi [%s] ... (Turn ON Hotspot 2.4GHz)\n", PRIMARY_SSID);
         }
     }
     delay(1000);
