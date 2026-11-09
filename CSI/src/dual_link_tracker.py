@@ -98,7 +98,6 @@ class LinkEngine:
 
         self.baseline_mean: Optional[np.ndarray] = None
         self.baseline_rssi: Optional[float] = None
-        self.baseline_var: Optional[float] = None
         self.calib_start: float = time.monotonic()
         self._calib_amps: List[np.ndarray] = []
         self._calib_rssis: List[float] = []
@@ -137,7 +136,6 @@ class LinkEngine:
     def recalibrate(self) -> None:
         self.baseline_mean = None
         self.baseline_rssi = None
-        self.baseline_var = None
         self.calib_start = time.monotonic()
         self._calib_amps.clear()
         self._calib_rssis.clear()
@@ -172,9 +170,6 @@ class LinkEngine:
                 amps_arr = np.asarray(self._calib_amps, dtype=np.float32)
                 self.baseline_mean = np.mean(amps_arr, axis=0)
                 self.baseline_rssi = float(np.mean(self._calib_rssis))
-                base_vars = np.var(amps_arr, axis=0)
-                base_mean = float(np.mean(self.baseline_mean)) + 1e-6
-                self.baseline_var = float(np.mean(base_vars)) / base_mean
             return 0.0
 
         # 2) Score computation
@@ -196,26 +191,21 @@ class LinkEngine:
             self._var_ema_slow = 0.18 * rel_var + 0.82 * self._var_ema_slow
         self.var_ema_diff = max(0.0, self._var_ema_fast - self._var_ema_slow)
 
-        # Subtract baseline noise floor so resting score drops to ~0%
-        base_noise = self.baseline_var if self.baseline_var is not None else 0.05
-        net_var = max(0.0, rel_var - (base_noise * 1.15))
-        rel_var_norm = net_var / (net_var + self.activity_scale)
-
-        raw_drop = max(0.0, (self.baseline_rssi or 0.0) - rssi)
-        net_drop = max(0.0, raw_drop - 1.5)
-        self.current_rssi_drop = raw_drop
-        rssi_drop_norm = net_drop / (net_drop + 7.0) if net_drop > 0 else 0.0
+        rel_var_norm = rel_var / (rel_var + self.activity_scale)
+        rssi_drop = max(0.0, (self.baseline_rssi or 0.0) - rssi)
+        self.current_rssi_drop = rssi_drop
+        rssi_drop_norm = rssi_drop / (rssi_drop + 8.0) if rssi_drop > 0 else 0.0
 
         instant_pct = float(np.clip(
-            ((rel_var_norm + 0.65 * rssi_drop_norm) / 1.65) * 100.0, 0.0, 100.0
+            ((rel_var_norm + 0.6 * rssi_drop_norm) / 1.6) * 100.0, 0.0, 100.0
         ))
 
-        alpha = 0.50 if instant_pct > self.current_score else 0.18
+        alpha = 0.55 if instant_pct > self.current_score else 0.20
         self.current_score = alpha * instant_pct + (1.0 - alpha) * self.current_score
 
         # In-beam with hysteresis
         thresh = self.threshold
-        hysteresis_low = max(6.0, thresh - 14.0)
+        hysteresis_low = max(8.0, thresh - 12.0)
         if self.current_score >= thresh:
             self.in_beam = True
         elif self.current_score < hysteresis_low:
@@ -279,46 +269,38 @@ class DualLinkFusion:
         if not presence and score1 < 15.0 and (score2 < 15.0 or not has_link2):
             return self._x, self._y, 0.0, False
 
-        # --- DUAL-LINK 2D FUSION (Router + 2 ESPs) ---
+        # --- DUAL-LINK 2D FUSION ---
         if has_link2:
-            # X Axis (Left <--> Right across room):
-            # ESP1 is on the Left, ESP2 is on the Right.
-            # Difference in activity directly spans the room width from 0.10 to 0.90:
-            tot_score = max(1.0, score1 + score2)
-            balance = (score2 - score1) / tot_score  # -1.0 (far left) to +1.0 (far right)
+            # X estimate:
+            # Link 1: ESP1 is at x=0.0 (high drop), AP1 is at x=1.0 (low drop).
+            # When Link 2 is active, it confirms person is near x=BEAM2_X (0.65).
+            d1_norm = min(1.0, rssi_drop1 / 16.0) if rssi_drop1 > 0 else 0.0
+            x_from_l1 = 0.85 - 0.70 * d1_norm  # High drop -> x closer to 0.15; low drop -> x closer to 0.85
             
-            target_x = 0.50 + balance * 0.44
-            target_x = float(np.clip(target_x, 0.08, 0.92))
+            w_l2_beam = min(1.0, score2 / 70.0)
+            target_x = (1.0 - 0.45 * w_l2_beam) * x_from_l1 + (0.45 * w_l2_beam) * self.BEAM2_X
 
-            # Y Axis (Front / Router <--> Back / ESPs):
-            # Depth spans from 0.18 (front near router) to 0.86 (back near ESPs):
-            avg_drop = (rssi_drop1 + rssi_drop2) / 2.0
-            avg_score = (score1 + score2) / 2.0
+            # Y estimate:
+            # Link 2: AP2 is at y=0.0 (low drop), ESP2 is at y=1.0 (high drop).
+            # When Link 1 is active, it confirms person is near y=BEAM1_Y (0.35).
+            d2_norm = min(1.0, rssi_drop2 / 16.0) if rssi_drop2 > 0 else 0.0
+            y_from_l2 = 0.15 + 0.70 * d2_norm  # High drop -> y closer to 0.85; low drop -> y closer to 0.15
             
-            drop_norm = min(1.0, avg_drop / 8.0)
-            score_norm = min(1.0, avg_score / 75.0)
-            depth_factor = 0.5 * drop_norm + 0.5 * score_norm
-            
-            target_y = 0.18 + depth_factor * 0.68
-            target_y = float(np.clip(target_y, 0.08, 0.92))
+            w_l1_beam = min(1.0, score1 / 70.0)
+            target_y = (1.0 - 0.45 * w_l1_beam) * y_from_l2 + (0.45 * w_l1_beam) * self.BEAM1_Y
 
         # --- SINGLE-LINK FALLBACK (Link 1 only) ---
         else:
-            d1_norm = min(1.0, rssi_drop1 / 10.0) if rssi_drop1 > 0 else 0.0
+            d1_norm = min(1.0, rssi_drop1 / 16.0) if rssi_drop1 > 0 else 0.0
             target_x = 0.85 - 0.70 * d1_norm
+            # Y gently modulates around the horizontal beam
             score_factor = (score1 / 100.0) - 0.5
-            target_y = 0.50 + 0.35 * score_factor
-            target_x = float(np.clip(target_x, 0.08, 0.92))
-            target_y = float(np.clip(target_y, 0.08, 0.92))
+            target_y = self.BEAM1_Y + 0.25 * score_factor
 
-        if presence:
-            # When moving: smoothly track person's steps with broad span
-            alpha = self.smooth_alpha
-            self._x = alpha * target_x + (1.0 - alpha) * self._x
-            self._y = alpha * target_y + (1.0 - alpha) * self._y
-        else:
-            # When stationary: Hold position rock-solid! Do NOT drift!
-            pass
+        # Kalman or EMA smoothing towards target
+        alpha = self.smooth_alpha if presence else 0.08
+        self._x = alpha * target_x + (1.0 - alpha) * self._x
+        self._y = alpha * target_y + (1.0 - alpha) * self._y
 
         return (
             float(np.clip(self._x, 0.05, 0.95)),
