@@ -1,15 +1,8 @@
 /*
  * WiFi CSI Presence Sensing - ESP32 #2 Firmware (Vertical Link / Y-axis)
  *
- * Identical to ESP32 #1 firmware but connects to AP2 (second router/access point).
- * This ESP forms the VERTICAL sensing link. Place it perpendicular to ESP32 #1.
- *
- * Hardware placement:
- *   ESP32 #1  ←→  AP1 : Horizontal beam (measures X position)
- *   ESP32 #2  ←→  AP2 : Vertical beam   (measures Y position)
- *
+ * Dedicated to Link 2: Connects to Hotspot [zoz]
  * Serial Baud: 921600
- * Flash this to your SECOND ESP32 on whatever COM port it appears as.
  */
 
 #include <WiFi.h>
@@ -21,42 +14,33 @@
 #include "rom/ets_sys.h"
 
 // -----------------------------------------------------------------------------
-// WiFi Credentials for AP2 (Second Router / Access Point)
-// Change these to match your second router's SSID and password.
+// WiFi Credentials for Hotspot #2 (zoz)
 // -----------------------------------------------------------------------------
 const char* PRIMARY_SSID = "zoz";
 const char* PRIMARY_PASS = "100200300";
 
-// Fallback: if AP2 not available, try the mobile hotspot as backup
-const char* BACKUP_SSID  = "S24 Ultra saif";
-const char* BACKUP_PASS  = "123456789ss";
-
-// 25 Hz: fast enough to catch human movement (walking ~1-2 m/s)
+// 25 Hz: optimal motion capture
 #define CONFIG_SEND_FREQUENCY 25
 
 static uint32_t s_count = 0;
 static esp_ping_handle_t ping_handle = NULL;
 static bool csi_initialized = false;
 static uint8_t s_bssid[6] = {0};
-static bool using_backup = false;
 
 // -----------------------------------------------------------------------------
-// Fast CSI Receive Callback: outputs via ROM ets_printf (non-blocking, fast)
-// Output format matches Python parse_csi_line in csi_reader.py
+// Fast CSI Receive Callback: outputs via ROM ets_printf
 // -----------------------------------------------------------------------------
 static void wifi_csi_rx_cb(void *ctx, wifi_csi_info_t *info) {
     if (!info || !info->buf) {
         return;
     }
 
-    // BSSID filter: only process packets from the connected AP
     if (ctx && memcmp(info->mac, ctx, 6) != 0) {
         return;
     }
 
     const wifi_pkt_rx_ctrl_t *rx = &info->rx_ctrl;
 
-    // Identical format to ESP32 #1 — Python parser handles both transparently
     ets_printf("CSI_DATA,%u,%02x:%02x:%02x:%02x:%02x:%02x,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,\"[",
                s_count++,
                info->mac[0], info->mac[1], info->mac[2],
@@ -67,14 +51,17 @@ static void wifi_csi_rx_cb(void *ctx, wifi_csi_info_t *info) {
                rx->timestamp, rx->ant, rx->sig_len, rx->sig_mode, info->len, info->first_word_invalid);
 
     for (int i = 0; i < info->len; i++) {
-        ets_printf("%d%s", info->buf[i], (i < info->len - 1) ? "," : "");
+        ets_printf("%d%s", (int8_t)info->buf[i], (i == info->len - 1) ? "" : " ");
     }
     ets_printf("]\"\n");
 }
 
 // -----------------------------------------------------------------------------
-// Ping Generator: Sends continuous ICMP Echo to gateway to generate CSI traffic
+// Ping Generator to sustain active CSI transmission
 // -----------------------------------------------------------------------------
+static void ping_success_cb(esp_ping_handle_t hdl, void *args) {}
+static void ping_timeout_cb(esp_ping_handle_t hdl, void *args) {}
+
 static void stop_ping() {
     if (ping_handle != NULL) {
         esp_ping_stop(ping_handle);
@@ -96,15 +83,23 @@ static void start_ping_gateway() {
     ping_config.count = 0; // Infinite
     ping_config.interval_ms = 1000 / CONFIG_SEND_FREQUENCY;
     ping_config.task_stack_size = 4096;
-    ping_config.data_size = 1;
 
-    ping_config.target_addr.u_addr.ip4.addr = static_cast<uint32_t>(gw);
-    ping_config.target_addr.type = ESP_IPADDR_TYPE_V4;
+    ip_addr_t target_addr;
+    memset(&target_addr, 0, sizeof(target_addr));
+    target_addr.type = IPADDR_TYPE_V4;
+    target_addr.u_addr.ip4.addr = (uint32_t)gw;
 
-    esp_ping_callbacks_t cbs = { 0 };
+    ping_config.target_addr = target_addr;
+
+    esp_ping_callbacks_t cbs;
+    memset(&cbs, 0, sizeof(cbs));
+    cbs.on_ping_success = ping_success_cb;
+    cbs.on_ping_timeout = ping_timeout_cb;
+
     esp_ping_new_session(&ping_config, &cbs, &ping_handle);
     esp_ping_start(ping_handle);
-    Serial.printf(">> Ping started to %s at %d Hz\n", gw.toString().c_str(), CONFIG_SEND_FREQUENCY);
+    Serial.printf(">> Pinging Hotspot Gateway [%s] at %d Hz for continuous CSI\n",
+                  gw.toString().c_str(), CONFIG_SEND_FREQUENCY);
 }
 
 // -----------------------------------------------------------------------------
@@ -130,14 +125,36 @@ static void setup_csi() {
         esp_wifi_set_csi_rx_cb(wifi_csi_rx_cb, s_bssid);
         esp_wifi_set_csi(true);
         csi_initialized = true;
-        Serial.println(">> CSI Hardware Engine Activated (Filtered to AP2 BSSID)!");
+        Serial.println(">> CSI Hardware Engine Activated on Link 2 (zoz)!");
     } else {
-        // Fallback: unfiltered
         esp_wifi_set_csi_config(&csi_config);
         esp_wifi_set_csi_rx_cb(wifi_csi_rx_cb, NULL);
         esp_wifi_set_csi(true);
         csi_initialized = true;
         Serial.println(">> CSI Hardware Engine Activated (Unfiltered)!");
+    }
+}
+
+// Scan helper
+static void scan_and_report() {
+    Serial.println(">> Scanning 2.4GHz WiFi networks nearby...");
+    int n = WiFi.scanNetworks(false, false, false, 300);
+    if (n == 0) {
+        Serial.println("   No networks found at all! Is Wi-Fi radio working?");
+    } else {
+        Serial.printf("   Found %d network(s):\n", n);
+        bool found_zoz = false;
+        for (int i = 0; i < n; i++) {
+            String s = WiFi.SSID(i);
+            Serial.printf("    - [%s] (Ch: %d, RSSI: %d dBm)\n", s.c_str(), WiFi.channel(i), WiFi.RSSI(i));
+            if (s.equalsIgnoreCase(PRIMARY_SSID)) {
+                found_zoz = true;
+            }
+        }
+        if (!found_zoz) {
+            Serial.println("   [!] ALERT: Network [zoz] NOT found in 2.4GHz scan!");
+            Serial.println("   -> Your phone hotspot is likely set to 5GHz! Change it to 2.4GHz.");
+        }
     }
 }
 
@@ -147,7 +164,7 @@ static void setup_csi() {
 void onWiFiEvent(WiFiEvent_t event, WiFiEventInfo_t info) {
     switch (event) {
         case ARDUINO_EVENT_WIFI_STA_CONNECTED:
-            Serial.printf("[WiFi] Connected to %s!\n", using_backup ? BACKUP_SSID : PRIMARY_SSID);
+            Serial.printf("[WiFi] CONNECTED to [%s]! Waiting for IP...\n", PRIMARY_SSID);
             break;
 
         case ARDUINO_EVENT_WIFI_STA_GOT_IP:
@@ -160,28 +177,19 @@ void onWiFiEvent(WiFiEvent_t event, WiFiEventInfo_t info) {
 
         case ARDUINO_EVENT_WIFI_STA_DISCONNECTED: {
             uint8_t reason = info.wifi_sta_disconnected.reason;
-            Serial.printf("[WiFi] Disconnected from %s! (Reason: %d)\n",
-                          using_backup ? BACKUP_SSID : PRIMARY_SSID, reason);
-            if (reason == 201) {
-                Serial.println("  -> Reason 201: SSID not found! Is AP2 ON and broadcasting 2.4GHz?");
-                // Try backup if primary fails
-                if (!using_backup) {
-                    Serial.printf("  -> Trying backup: [%s] ...\n", BACKUP_SSID);
-                    using_backup = true;
-                    csi_initialized = false;
-                    stop_ping();
-                    WiFi.disconnect();
-                    delay(500);
-                    WiFi.begin(BACKUP_SSID, BACKUP_PASS);
-                    return;
-                }
-            } else if (reason == 15 || reason == 202) {
-                Serial.println("  -> Reason 15/202: 4-Way Handshake Timeout! Check AP2 password or PMF settings.");
-            } else if (reason == 2) {
-                Serial.println("  -> Reason 2: Auth Expired! Reconnecting...");
-            }
+            Serial.printf("[WiFi] Disconnected from [%s]! (Reason: %d)\n", PRIMARY_SSID, reason);
             csi_initialized = false;
             stop_ping();
+
+            if (reason == 201) {
+                Serial.println("  -> Reason 201: [zoz] SSID not found in 2.4GHz band!");
+                scan_and_report();
+            } else if (reason == 36 || reason == 15 || reason == 202) {
+                Serial.println("  -> Reason 36/15: Auth handshake failed (WPA3 / PMF issue).");
+                Serial.println("  -> Change Hotspot Security from WPA3 to WPA2-Personal on the phone!");
+            } else if (reason == 2) {
+                Serial.println("  -> Reason 2: Auth expired! Reconnecting...");
+            }
             break;
         }
 
@@ -194,8 +202,8 @@ void setup() {
     Serial.begin(921600);
     delay(1000);
     Serial.println("\n==========================================");
-    Serial.println("   WiFi CSI Presence - ESP32 #2 (V-Link)");
-    Serial.println("   Vertical Beam: Measures Y-axis position");
+    Serial.println("   WiFi CSI Presence - ESP32 #2 (Link 2)");
+    Serial.println("   Connecting exclusively to: [zoz]");
     Serial.println("==========================================");
 
     WiFi.onEvent(onWiFiEvent);
@@ -205,21 +213,28 @@ void setup() {
     esp_wifi_set_ps(WIFI_PS_NONE);
     WiFi.setAutoReconnect(true);
 
-    Serial.printf("Connecting to AP2 [%s] ...\n", PRIMARY_SSID);
+    // Configure PMF (Protected Management Frames) for modern Android compatibility
+    wifi_config_t conf;
+    memset(&conf, 0, sizeof(conf));
+    strncpy((char*)conf.sta.ssid, PRIMARY_SSID, sizeof(conf.sta.ssid));
+    strncpy((char*)conf.sta.password, PRIMARY_PASS, sizeof(conf.sta.password));
+    conf.sta.pmf_cfg.capable = true;
+    conf.sta.pmf_cfg.required = false;
+    esp_wifi_set_config(WIFI_IF_STA, &conf);
+
+    Serial.printf("Connecting to Hotspot [%s] ...\n", PRIMARY_SSID);
     WiFi.begin(PRIMARY_SSID, PRIMARY_PASS);
 }
 
 void loop() {
-    // Keep WiFi alive: retry connection if dropped
     if (WiFi.status() != WL_CONNECTED) {
         static unsigned long last_retry = 0;
-        if (millis() - last_retry > 5000) {
+        if (millis() - last_retry > 6000) {
             last_retry = millis();
-            const char* ssid = using_backup ? BACKUP_SSID : PRIMARY_SSID;
-            const char* pass = using_backup ? BACKUP_PASS  : PRIMARY_PASS;
-            Serial.printf("Retrying connection to [%s] ...\n", ssid);
+            Serial.printf("Retrying connection to [%s] ...\n", PRIMARY_SSID);
             WiFi.disconnect();
-            WiFi.begin(ssid, pass);
+            delay(200);
+            WiFi.begin(PRIMARY_SSID, PRIMARY_PASS);
         }
     }
     delay(1000);
