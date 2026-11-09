@@ -173,17 +173,21 @@ class SingleLinkEngine:
     def in_cooldown(self) -> bool:
         return time.monotonic() < self._cooldown_until
 
-    # ── Crowd classifier (1 or 2 People) ──────────────────────────────────────
+    # ── Crowd classifier (1, 2, or 3+ People) ──────────────────────────────────
     def _classify(self, duration: float, peak_score: float, rssi_drop: float) -> Tuple[int, str]:
         """Return (count, label) for a completed crossing event."""
-        if duration >= 1.2 and peak_score >= 88.0 and rssi_drop >= 18.0:
+        if peak_score >= 90.0 or (duration >= 1.3 and rssi_drop >= 17.0):
+            return 3, "3+ People"
+        elif peak_score >= 74.0 or (duration >= 0.9 and rssi_drop >= 9.0):
             return 2, "2 People"
         return 1, "1 Person"
 
     # ── Live instant-people estimate (while beam is active) ───────────────────
     def _estimate_instant(self, peak_score: float, rssi_drop: float, elapsed: float) -> int:
-        """Rough real-time crowd estimate (1 or 2 people)."""
-        if elapsed >= 0.9 and peak_score >= 88.0 and rssi_drop >= 18.0:
+        """Real-time crowd estimate (1, 2, or 3+ people)."""
+        if peak_score >= 90.0 or (elapsed >= 1.2 and rssi_drop >= 17.0):
+            return 3
+        elif peak_score >= 74.0 or (elapsed >= 0.7 and rssi_drop >= 9.0):
             return 2
         return 1
 
@@ -236,40 +240,32 @@ class SingleLinkEngine:
             self._var_ema_slow = 0.18 * rel_var + 0.82 * self._var_ema_slow
         self.var_ema_diff = max(0.0, self._var_ema_fast - self._var_ema_slow)
 
-        # Subtract ambient room noise floor measured during calibration
-        base_noise = self.baseline_var if self.baseline_var is not None else 0.04
-        net_var = max(0.0, rel_var - (base_noise * 1.12))
+        # Baseline noise subtraction: cancel ambient RF floor
+        base_noise = self.baseline_var if self.baseline_var is not None else 0.035
+        net_var = max(0.0, rel_var - (base_noise * 1.10))
         rel_var_norm = net_var / (net_var + self.activity_scale)
 
         raw_drop = max(0.0, (self.baseline_rssi or 0.0) - rssi)
-        net_drop = max(0.0, raw_drop - 1.2)
         self.current_rssi_drop = raw_drop
-        rssi_drop_norm = net_drop / (net_drop + 7.0) if net_drop > 0 else 0.0
+        rssi_drop = raw_drop
+        net_drop = max(0.0, raw_drop - 1.2)
+        rssi_drop_norm = net_drop / (net_drop + 7.5) if net_drop > 0 else 0.0
 
         instant_pct = float(np.clip(
             ((rel_var_norm + 0.65 * rssi_drop_norm) / 1.65) * 100.0, 0.0, 100.0
         ))
 
-        # 3-frame rolling median to absorb single-frame spike noise
+        # 3-frame rolling median to absorb solitary packet spike noise
         self._raw_pct_hist.append(instant_pct)
         filt_pct = float(np.median(self._raw_pct_hist)) if len(self._raw_pct_hist) >= 3 else instant_pct
 
-        # --- Dual-Regime Active vs. Quiet Baseline Control ---
-        thresh = self.threshold
-        quiet_floor = thresh - 8.0  # 45.0 for threshold 53.0
-
-        if filt_pct >= quiet_floor or filt_pct > (self.current_score + 6.0):
-            # ACTIVE MOTION / APPROACHING: Responsive rise with natural live motion wave ripples!
-            alpha = 0.48 if filt_pct > self.current_score else 0.22
-            self.current_score = alpha * filt_pct + (1.0 - alpha) * self.current_score
-        else:
-            # NOBODY PRESENT / STEPPED AWAY:
-            # Steady, gradual, noticeable descent straight to 0.0 flat line, completely killing high-frequency noise!
-            decay_step = max(0.40, 0.08 * self.current_score)
-            self.current_score = max(0.0, self.current_score - decay_step)
-            if self.current_score < 1.5:
-                self.current_score = 0.0
-
+        # Smooth, natural asymmetric smoothing:
+        # Fast responsive rise when person approaches or moves,
+        # Gradual, smooth, noticeable descent down towards baseline when clear:
+        alpha = 0.42 if filt_pct > self.current_score else 0.16
+        self.current_score = alpha * filt_pct + (1.0 - alpha) * self.current_score
+        if self.current_score < 0.8:
+            self.current_score = 0.0
         self._score_window.append(self.current_score)
 
         # ── 3) Tripwire state machine ─────────────────────────────────────────
@@ -313,9 +309,7 @@ class SingleLinkEngine:
                 self._cross_peak_score = 0.0
                 self._cross_peak_drop = 0.0
                 self._cross_peak_ema_diff = 0.0
-
-            # Line drops to floor -> 0 Clear (Green: NORMAL)
-            self.instant_people = 0
+                self.instant_people = 0
 
         return self.current_score
 
@@ -593,8 +587,11 @@ class ScopeUI:
         elif engine.instant_people == 1:
             inst_text = "~1  Person"
             inst_col = COLOR_ORANGE
-        else:
+        elif engine.instant_people == 2:
             inst_text = "~2  People"
+            inst_col = COLOR_RED
+        else:
+            inst_text = f"~{engine.instant_people}+ People"
             inst_col = COLOR_RED
 
         cv2.putText(canvas, inst_text, (px + 14, card2_y + 58),
