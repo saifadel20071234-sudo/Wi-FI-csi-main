@@ -21,13 +21,12 @@
 #include "rom/ets_sys.h"
 
 // -----------------------------------------------------------------------------
-// WiFi Credentials for AP2 (Second Router / Access Point)
-// Change these to match your second router's SSID and password.
+// WiFi Credentials (Router: venom)
 // -----------------------------------------------------------------------------
-const char* PRIMARY_SSID = "CSI_AP2";
-const char* PRIMARY_PASS = "csicsi2024";
+const char* PRIMARY_SSID = "venom";
+const char* PRIMARY_PASS = "12345678";
 
-// Fallback: if AP2 not available, try the mobile hotspot as backup
+// Fallback: if router not available, try the mobile hotspot as backup
 const char* BACKUP_SSID  = "S24 Ultra saif";
 const char* BACKUP_PASS  = "123456789ss";
 

@@ -15,14 +15,14 @@
 #include "rom/ets_sys.h"
 
 // -----------------------------------------------------------------------------
-// WiFi Credentials (Supports Hotspot or Access Point)
+// WiFi Credentials (Supports Hotspot or Router: venom)
 // -----------------------------------------------------------------------------
-const char* PRIMARY_SSID = "S24 Ultra saif";
-const char* PRIMARY_PASS = "123456789ss";
+const char* PRIMARY_SSID = "venom";
+const char* PRIMARY_PASS = "12345678";
 
-// Optional secondary Access Point (if user configures an AP)
-const char* BACKUP_SSID  = "CSI_AP";
-const char* BACKUP_PASS  = "123456789";
+// Backup mobile hotspot
+const char* BACKUP_SSID  = "S24 Ultra saif";
+const char* BACKUP_PASS  = "123456789ss";
 
 // 25 Hz is the sweet spot: fast motion capture, zero rate-limit drops
 #define CONFIG_SEND_FREQUENCY 25
