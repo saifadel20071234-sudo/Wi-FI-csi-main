@@ -31,6 +31,7 @@ static uint32_t s_count = 0;
 static esp_ping_handle_t ping_handle = NULL;
 static bool csi_initialized = false;
 static uint8_t s_bssid[6] = {0};
+static bool using_backup = false;
 
 // -----------------------------------------------------------------------------
 // Fast CSI Receive Callback: outputs via ROM ets_printf (non-blocking, fast)
@@ -151,14 +152,18 @@ void onWiFiEvent(WiFiEvent_t event, WiFiEventInfo_t info) {
 
         case ARDUINO_EVENT_WIFI_STA_DISCONNECTED: {
             uint8_t reason = info.wifi_sta_disconnected.reason;
-            Serial.printf("[WiFi] Disconnected! (Reason Code: %d)\n", reason);
-            if (reason == 201) {
-                Serial.println("  -> Reason 201: SSID not found! Check hotspot/AP is ON & 2.4 GHz.");
+            Serial.printf("[WiFi] Disconnected from %s! (Reason Code: %d)\n",
+                          using_backup ? BACKUP_SSID : PRIMARY_SSID, reason);
+            if (reason == 36) {
+                Serial.println("  -> Reason 36: Cipher Mismatch (Wi-Fi 6 / GCMP)! On phone Hotspot -> Turn OFF 'Wi-Fi 6 standard' & set Security to WPA2-Personal.");
+            } else if (reason == 201) {
+                Serial.println("  -> Reason 201: Network not found! Check hotspot/AP is ON & 2.4 GHz.");
             } else if (reason == 15 || reason == 202) {
-                Serial.println("  -> Reason 15/202: 4-Way Handshake Timeout! Check password or PMF.");
+                Serial.println("  -> Reason 15/202: 4-Way Handshake Timeout! Check password.");
             } else if (reason == 2) {
-                Serial.println("  -> Reason 2: Auth Expired!");
+                Serial.println("  -> Reason 2: Auth Expired! Check password on router/hotspot.");
             }
+            csi_initialized = false;
             stop_ping();
             break;
         }
@@ -188,14 +193,22 @@ void setup() {
 }
 
 void loop() {
-    // Keep WiFi alive: retry connection if lost
+    // Keep WiFi alive: retry connection if lost, alternating networks
     if (WiFi.status() != WL_CONNECTED) {
         static unsigned long last_retry = 0;
-        if (millis() - last_retry > 5000) {
+        static int fail_count = 0;
+        if (millis() - last_retry > 4000) {
             last_retry = millis();
-            Serial.printf("Retrying connection to [%s] ...\n", PRIMARY_SSID);
+            fail_count++;
+            if (fail_count % 2 == 0) {
+                using_backup = !using_backup;
+            }
+            const char* ssid = using_backup ? BACKUP_SSID : PRIMARY_SSID;
+            const char* pass = using_backup ? BACKUP_PASS  : PRIMARY_PASS;
+            Serial.printf(">> Retrying connection to [%s] ...\n", ssid);
             WiFi.disconnect();
-            WiFi.begin(PRIMARY_SSID, PRIMARY_PASS);
+            delay(100);
+            WiFi.begin(ssid, pass);
         }
     }
     delay(1000);
