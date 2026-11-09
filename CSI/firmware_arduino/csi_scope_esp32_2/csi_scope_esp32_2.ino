@@ -21,14 +21,14 @@
 #include "rom/ets_sys.h"
 
 // -----------------------------------------------------------------------------
-// WiFi Credentials (Mobile Hotspot is Primary: S24 Ultra saif)
+// WiFi Credentials (Router: venom is Primary, Hotspot is Backup)
 // -----------------------------------------------------------------------------
-const char* PRIMARY_SSID = "S24 Ultra saif";
-const char* PRIMARY_PASS = "123456789ss";
+const char* PRIMARY_SSID = "venom";
+const char* PRIMARY_PASS = "12345678";
 
-// Backup router: venom
-const char* BACKUP_SSID  = "venom";
-const char* BACKUP_PASS  = "12345678";
+// Backup mobile hotspot
+const char* BACKUP_SSID  = "S24 Ultra saif";
+const char* BACKUP_PASS  = "123456789ss";
 
 // 25 Hz: fast enough to catch human movement (walking ~1-2 m/s)
 #define CONFIG_SEND_FREQUENCY 25

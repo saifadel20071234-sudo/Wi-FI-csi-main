@@ -117,6 +117,7 @@ class SingleLinkEngine:
         self._var_ema_slow: float = 0.0  # span ~ 10 frames
         self.var_ema_diff: float = 0.0   # fast - slow: robust surge detector
         self._score_window: deque = deque(maxlen=20)  # rolling window for quantile filtering
+        self._raw_pct_hist: deque = deque(maxlen=5)
 
         # People counting state machine
         self.total_crossings: int = 0
@@ -140,6 +141,7 @@ class SingleLinkEngine:
         self._calib_rssis.clear()
         self._amp_hist.clear()
         self._score_window.clear()
+        self._raw_pct_hist.clear()
         self._var_ema_fast = 0.0
         self._var_ema_slow = 0.0
         self.var_ema_diff = 0.0
@@ -248,8 +250,13 @@ class SingleLinkEngine:
             ((rel_var_norm + 0.65 * rssi_drop_norm) / 1.65) * 100.0, 0.0, 100.0
         ))
 
-        alpha = 0.50 if instant_pct > self.current_score else 0.18
-        self.current_score = alpha * instant_pct + (1.0 - alpha) * self.current_score
+        # 3-frame rolling filter for outlier rejection
+        self._raw_pct_hist.append(instant_pct)
+        filt_pct = float(np.median(self._raw_pct_hist)) if len(self._raw_pct_hist) >= 3 else instant_pct
+
+        # Smoother rise (0.24) and gentle sustain decay (0.09) so motion is clearly observable
+        alpha = 0.24 if filt_pct > self.current_score else 0.09
+        self.current_score = alpha * filt_pct + (1.0 - alpha) * self.current_score
         self._score_window.append(self.current_score)
 
         # ── 3) Tripwire state machine & People Counting ───────────────────────
@@ -773,7 +780,7 @@ def main() -> int:
                     last_print = now
                     print_console_bar(engine)
 
-            time.sleep(0.012)
+            time.sleep(0.022)
 
             if args.seconds > 0 and (time.monotonic() - start_t) >= args.seconds:
                 break
