@@ -474,7 +474,7 @@ class TrackerUI:
         self.hud_w = width - self.hud_x
 
         # Trail
-        self.trail: deque = deque(maxlen=80)
+        self.trail: deque = deque(maxlen=16)
         self._fps_times: deque = deque(maxlen=30)
 
         cv2.namedWindow(title, cv2.WINDOW_NORMAL)
@@ -506,17 +506,31 @@ class TrackerUI:
         norm_x: float = 0.5,
         norm_y: float = 0.5,
     ) -> None:
-        """Renders ONLY the authentic FLIR infrared thermal human heat figure with no clutter."""
+        """Renders the authentic 3D FLIR thermal human avatar with futuristic HUD tracking."""
         rx1 = self.room_x0 + self.room_w
         ry1 = self.room_y0 + self.room_h
 
-        # 1. Soft organic thermal foot-contact glow on the floor
-        foot_glow_col = (20, 60, 220) if not is_stationary else (120, 80, 20)
+        # 1. Ground Thermal Radar Pedestal under feet at (cx, cy)
+        ped_col = COLOR_CYAN if is_stationary else (45, 195, 255)
+        ped_w = 36
+        ped_h = 13
+
+        # Soft thermal foot-contact radiation glow directly under feet
         overlay = canvas.copy()
-        cv2.ellipse(overlay, (cx, cy + 2), (22, 8), 0, 0, 360, foot_glow_col, -1, cv2.LINE_AA)
+        glow_bgr = (20, 60, 200) if not is_stationary else (120, 80, 25)
+        cv2.ellipse(overlay, (cx, cy + 2), (int(ped_w * 1.3), int(ped_h * 1.3)), 0, 0, 360, glow_bgr, -1, cv2.LINE_AA)
         cv2.addWeighted(overlay, 0.35, canvas, 0.65, 0, canvas)
 
-        # 2. Render Pure Thermal Human Avatar
+        # Concentric tech rings with cardinal ticks
+        cv2.ellipse(canvas, (cx, cy), (ped_w, ped_h), 0, 0, 360, ped_col, 2, cv2.LINE_AA)
+        cv2.ellipse(canvas, (cx, cy), (int(ped_w * 0.45), int(ped_h * 0.45)), 0, 0, 360, (255, 255, 255), 1, cv2.LINE_AA)
+        cv2.line(canvas, (cx - ped_w - 4, cy), (cx - ped_w + 4, cy), ped_col, 2)
+        cv2.line(canvas, (cx + ped_w - 4, cy), (cx + ped_w + 4, cy), ped_col, 2)
+        cv2.line(canvas, (cx, cy - ped_h - 3), (cx, cy - ped_h + 3), ped_col, 2)
+        cv2.line(canvas, (cx, cy + ped_h - 3), (cx, cy + ped_h + 3), ped_col, 2)
+        cv2.circle(canvas, (cx, cy), 3, (255, 255, 255), -1, cv2.LINE_AA)
+
+        # 2. Render Authentic 3D FLIR Thermal Human Figure
         target_h = 120  # High-definition prominent thermal human body
         if self.avatar_sprite is not None and self.avatar_sprite.ndim == 3 and self.avatar_sprite.shape[2] == 4:
             aspect = self.avatar_sprite.shape[1] / float(self.avatar_sprite.shape[0])
@@ -526,7 +540,7 @@ class TrackerUI:
 
             # Feet stand at (cx, cy)
             spr_x0 = cx - target_w // 2
-            spr_y0 = cy - target_h + 10
+            spr_y0 = cy - target_h + 8
             spr_x1 = spr_x0 + target_w
             spr_y1 = spr_y0 + target_h
 
@@ -545,9 +559,45 @@ class TrackerUI:
                 spr_rgb = spr_crop[:, :, :3]
                 spr_alpha = spr_crop[:, :, 3].astype(float) / 255.0
 
+                if is_stationary:
+                    spr_rgb = spr_rgb.copy()
+                    # Soft equilibrium tint when locked/still
+                    spr_rgb[:, :, 0] = np.clip(spr_rgb[:, :, 0].astype(float) * 1.15, 0, 255).astype(np.uint8)
+
                 roi = canvas[dest_y0:dest_y1, dest_x0:dest_x1]
                 for c in range(3):
                     roi[:, :, c] = (spr_rgb[:, :, c] * spr_alpha + roi[:, :, c] * (1.0 - spr_alpha)).astype(np.uint8)
+
+            # 3. Futuristic HUD Corner Reticle Brackets framing the thermal figure
+            bx0 = max(self.room_x0 + 2, spr_x0 - 7)
+            by0 = max(self.room_y0 + 2, spr_y0 - 5)
+            bx1 = min(rx1 - 2, spr_x1 + 7)
+            by1 = min(ry1 - 2, spr_y1 + 5)
+            b_col = COLOR_CYAN if is_stationary else (45, 205, 255)
+            blen = 10
+
+            # Corner lines
+            cv2.line(canvas, (bx0, by0), (bx0 + blen, by0), b_col, 2)
+            cv2.line(canvas, (bx0, by0), (bx0, by0 + blen), b_col, 2)
+            cv2.line(canvas, (bx1, by0), (bx1 - blen, by0), b_col, 2)
+            cv2.line(canvas, (bx1, by0), (bx1, by0 + blen), b_col, 2)
+            cv2.line(canvas, (bx0, by1), (bx0 + blen, by1), b_col, 2)
+            cv2.line(canvas, (bx0, by1), (bx0, by1 - blen), b_col, 2)
+            cv2.line(canvas, (bx1, by1), (bx1 - blen, by1), b_col, 2)
+            cv2.line(canvas, (bx1, by1), (bx1, by1 - blen), b_col, 2)
+
+            # 4. Floating Holographic Status Badge (Above the head)
+            tag_text = f"TARGET: ({norm_x:.2f}, {norm_y:.2f}) [THERMAL ACQUIRED]" if not is_stationary else f"LOCKED: ({norm_x:.2f}, {norm_y:.2f}) [STATIONARY]"
+            tag_y = max(self.room_y0 + 20, spr_y0 - 13)
+            (tw, th), _ = cv2.getTextSize(tag_text, cv2.FONT_HERSHEY_DUPLEX, 0.42, 1)
+            t_x0 = np.clip(cx - tw // 2 - 8, self.room_x0 + 4, rx1 - tw - 18)
+            t_x1 = t_x0 + tw + 16
+            t_y0 = tag_y - th - 6
+            t_y1 = tag_y + 4
+            cv2.rectangle(canvas, (t_x0, t_y0), (t_x1, t_y1), (18, 22, 32), -1)
+            cv2.rectangle(canvas, (t_x0, t_y0), (t_x1, t_y1), b_col, 1)
+            cv2.putText(canvas, tag_text, (t_x0 + 8, tag_y - 2),
+                        cv2.FONT_HERSHEY_DUPLEX, 0.42, TEXT_WHITE, 1, cv2.LINE_AA)
         else:
             self._draw_procedural_thermal_human(canvas, cx, cy, is_stationary)
 
@@ -653,10 +703,13 @@ class TrackerUI:
             cv2.line(canvas, (gx, self.room_y0), (gx, ry1), GRID_COLOR, 1)
             cv2.line(canvas, (self.room_x0, gy), (rx1, gy), GRID_COLOR, 1)
 
-        # Heatmap overlay
-        heat_bgr = heatmap.to_bgr(self.room_w, self.room_h)
-        roi = canvas[self.room_y0:ry1, self.room_x0:rx1]
-        cv2.addWeighted(heat_bgr, 0.60, roi, 0.40, 0, dst=roi)
+        # Heatmap overlay: Room grid stays clean, dark and high-tech;
+        # the 3D human body itself acts as the primary radiant thermal signature.
+        # Radar range rings for high-tech presentation
+        rcx = self.room_x0 + self.room_w // 2
+        rcy = self.room_y0 + self.room_h // 2
+        for r_dist in (110, 220):
+            cv2.circle(canvas, (rcx, rcy), r_dist, (22, 30, 42), 1, cv2.LINE_AA)
 
         # Link beam visualizations
         # Link 1: horizontal beam (left ↔ right across room at y=0.35)
@@ -693,10 +746,28 @@ class TrackerUI:
             cv2.putText(canvas, f"Link2: {s2_pct}%", (self.room_x0 + 4, self.room_y0 + 32),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.42, s2_col, 1, cv2.LINE_AA)
 
-        # Clean Pure Thermal Human Rendering (No green scribbles, no crosshairs!)
+        # Person trail: Sleek thermal energy trail
+        if len(self.trail) >= 2:
+            pts = list(self.trail)
+            for i in range(1, len(pts)):
+                alpha = i / len(pts)
+                col = (int(240 * alpha * 0.8), int(160 * alpha * 0.7), int(45 * alpha * 0.4))
+                cv2.line(canvas, pts[i - 1], pts[i], col, 1 if i < len(pts) // 2 else 2, cv2.LINE_AA)
+                if i % 3 == 0:
+                    cv2.circle(canvas, pts[i], 2, (int(255 * alpha), int(220 * alpha), int(90 * alpha)), -1, cv2.LINE_AA)
+
+        # Person Thermal Avatar (Stays visible and locked when stationary!)
         if presence:
             pdx, pdy = self.to_px(x, y)
-            # Draw ONLY the radiant thermal human heat figure
+            if not is_stationary:
+                self.trail.append((pdx, pdy))
+
+            # Floor guide crosshairs (subtle cyber lines)
+            ch_col = (30, 42, 54) if is_stationary else (24, 40, 32)
+            cv2.line(canvas, (self.room_x0, pdy), (rx1, pdy), ch_col, 1)
+            cv2.line(canvas, (pdx, self.room_y0), (pdx, ry1), ch_col, 1)
+
+            # Draw authentic 3D Holographic Avatar with HUD tracking
             self._draw_thermal_avatar(canvas, pdx, pdy, is_stationary, eng1.current_score, norm_x=x, norm_y=y)
 
         # Room label
@@ -929,6 +1000,9 @@ def main() -> int:
     demo_source: Optional[DualLinkDemoSource] = None
     reader1: Optional[CSIReader] = None
     reader2: Optional[CSIReader] = None
+    port1_label = "DEMO"
+    port2_label = "DEMO"
+
     port1 = args.port1.strip()
     port2 = args.port2.strip()
     port1_label = "DEMO"
@@ -1008,10 +1082,7 @@ def main() -> int:
     # --- Setup UI ---
     ui: Optional[TrackerUI] = None
     if not args.no_gui:
-        if port2:
-            ui_title = f"WiFi CSI 2D Tracker - [{port1_label} | {port2_label}]"
-        else:
-            ui_title = f"WiFi CSI 2D Tracker - [{port1_label}]"
+        ui_title = f"WiFi CSI 2D Tracker — [{port1_label} | {port2_label}]" if port2 else f"WiFi CSI 2D Tracker — [{port1_label}]"
         ui = TrackerUI(title=ui_title)
     else:
         print(f">> Console mode. Threshold: {threshold}%. Press Ctrl+C to quit.\n")
