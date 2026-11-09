@@ -217,8 +217,8 @@ class LinkEngine:
             ((rel_var_norm + 0.65 * rssi_drop_norm) / 1.65) * 100.0, 0.0, 100.0
         ))
 
-        # Balanced agile tracking: smooth human-paced rise and decay
-        alpha = 0.48 if instant_pct > self.current_score else 0.18
+        # Responsive agile tracking (fast 0.82 attack for instant motion response)
+        alpha = 0.82 if instant_pct > self.current_score else 0.20
         self.current_score = alpha * instant_pct + (1.0 - alpha) * self.current_score
 
         # In-beam with hysteresis
@@ -331,20 +331,14 @@ class DualLinkFusion:
         target_x = float(np.clip(target_x, 0.08, 0.92))
         target_y = float(np.clip(target_y, 0.08, 0.92))
 
-        # Smooth human walking pace glide:
-        # Rate-limited movement so the user can clearly see the person and heat moving across the room!
-        dx = target_x - self._x
-        dy = target_y - self._y
-        dist = math.hypot(dx, dy)
-
-        if dist < 0.010:
+        # Ultra-low-latency tracking (alpha=0.88) with minimal deadband
+        dist = math.hypot(target_x - self._x, target_y - self._y)
+        if dist < 0.012:
             pass
         else:
-            # Natural walking step (max ~0.022 per frame = ~1.8s to cross full room)
-            max_step = 0.022
-            step = min(dist * 0.28, max_step)
-            self._x += (dx / dist) * step
-            self._y += (dy / dist) * step
+            alpha = 0.88
+            self._x = alpha * target_x + (1.0 - alpha) * self._x
+            self._y = alpha * target_y + (1.0 - alpha) * self._y
 
         self.last_valid_x = self._x
         self.last_valid_y = self._y
@@ -381,9 +375,9 @@ class HeatmapEngine:
         self,
         grid_w: int = 100,
         grid_h: int = 80,
-        decay: float = 0.988,
-        blob_sigma_px: int = 10,
-        intensity: float = 24.0,
+        decay: float = 0.978,
+        blob_sigma_px: int = 8,
+        intensity: float = 18.0,
     ) -> None:
         self.grid_w = grid_w
         self.grid_h = grid_h
@@ -477,7 +471,7 @@ class TrackerUI:
         self.hud_w = width - self.hud_x
 
         # Trail
-        self.trail: deque = deque(maxlen=120)
+        self.trail: deque = deque(maxlen=80)
         self._fps_times: deque = deque(maxlen=30)
 
         cv2.namedWindow(title, cv2.WINDOW_NORMAL)
@@ -610,12 +604,12 @@ class TrackerUI:
             cv2.putText(canvas, f"Link2: {s2_pct}%", (self.room_x0 + 4, self.room_y0 + 32),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.42, s2_col, 1, cv2.LINE_AA)
 
-        # Person trail: glowing gradient path showing walking trajectory
+        # Person trail
         if len(self.trail) >= 2:
             pts = list(self.trail)
             for i in range(1, len(pts)):
                 alpha = i / len(pts)
-                col = (int(80 * alpha), int(220 * alpha), int(100 * alpha))
+                col = (int(60 * alpha), int(190 * alpha), int(80 * alpha))
                 cv2.line(canvas, pts[i - 1], pts[i], col, 2, cv2.LINE_AA)
 
         # Person dot (Stays visible and locked when stationary!)
@@ -928,8 +922,8 @@ def main() -> int:
     eng1 = LinkEngine("link1", threshold=threshold)
     eng2 = LinkEngine("link2", threshold=threshold)
     fusion = DualLinkFusion(smooth_alpha=0.35)
-    kalman = KalmanTracker(process_noise=1.8e-2, measurement_noise=6e-3)
-    heatmap = HeatmapEngine(grid_w=100, grid_h=80, decay=0.988, blob_sigma_px=10, intensity=24.0)
+    kalman = KalmanTracker(process_noise=6e-2, measurement_noise=1.5e-3)
+    heatmap = HeatmapEngine(grid_w=100, grid_h=80, decay=0.978, blob_sigma_px=8, intensity=18.0)
 
     # --- Setup UI ---
     ui: Optional[TrackerUI] = None
