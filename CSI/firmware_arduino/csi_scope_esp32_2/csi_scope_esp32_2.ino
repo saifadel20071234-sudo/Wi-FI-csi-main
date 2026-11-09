@@ -24,8 +24,8 @@
 // WiFi Credentials for AP2 (Second Router / Access Point)
 // Change these to match your second router's SSID and password.
 // -----------------------------------------------------------------------------
-const char* PRIMARY_SSID = "CSI_AP2";
-const char* PRIMARY_PASS = "csicsi2024";
+const char* PRIMARY_SSID = "zoz";
+const char* PRIMARY_PASS = "100200300";
 
 // Fallback: if AP2 not available, try the mobile hotspot as backup
 const char* BACKUP_SSID  = "S24 Ultra saif";
