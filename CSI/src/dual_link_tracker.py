@@ -82,7 +82,7 @@ class LinkEngine:
     def __init__(
         self,
         link_id: str,
-        window_frames: int = 20,
+        window_frames: int = 12,
         calibration_seconds: float = 3.0,
         threshold: float = 50.0,
         activity_scale: float = 0.15,
@@ -95,6 +95,7 @@ class LinkEngine:
 
         self._amp_hist: deque = deque(maxlen=window_frames)
         self._rssi_hist: deque = deque(maxlen=window_frames)
+        self._pct_hist: deque = deque(maxlen=5)
 
         self.baseline_mean: Optional[np.ndarray] = None
         self.baseline_rssi: Optional[float] = None
@@ -144,6 +145,7 @@ class LinkEngine:
         self._calib_amps.clear()
         self._calib_rssis.clear()
         self._amp_hist.clear()
+        self._pct_hist.clear()
         self._var_ema_fast = 0.0
         self._var_ema_slow = 0.0
         self.var_ema_diff = 0.0
@@ -174,8 +176,14 @@ class LinkEngine:
                 amps_arr = np.asarray(self._calib_amps, dtype=np.float32)
                 self.baseline_mean = np.mean(amps_arr, axis=0)
                 self.baseline_rssi = float(np.mean(self._calib_rssis))
-                base_mean = float(np.mean(self.baseline_mean)) + 1e-6
-                self.baseline_var = float(np.mean(np.var(amps_arr, axis=0))) / base_mean
+                if amps_arr.shape[1] >= 64:
+                    active_calib = np.concatenate([amps_arr[:, 6:32], amps_arr[:, 33:59]], axis=1)
+                    active_mean = float(np.mean(self.baseline_mean[6:32])) + float(np.mean(self.baseline_mean[33:59]))
+                    active_mean = (active_mean / 2.0) + 1e-6
+                    self.baseline_var = float(np.mean(np.var(active_calib, axis=0))) / active_mean
+                else:
+                    base_mean = float(np.mean(self.baseline_mean)) + 1e-6
+                    self.baseline_var = float(np.mean(np.var(amps_arr, axis=0))) / base_mean
             return 0.0
 
         # 2) Score computation
@@ -183,24 +191,37 @@ class LinkEngine:
             return self.current_score
 
         stack = np.asarray(list(self._amp_hist), dtype=np.float32)
-        var_per_sc = np.var(stack, axis=0)
-        base_mean = float(np.mean(self.baseline_mean)) + 1e-6
+        
+        # High accuracy: filter out edge guards & null subcarrier (use active 802.11n carriers)
+        if stack.shape[1] >= 64:
+            sub_low = stack[:, 6:32]
+            sub_high = stack[:, 33:59]
+            active_stack = np.concatenate([sub_low, sub_high], axis=1)
+            v_low = float(np.mean(np.var(sub_low, axis=0)))
+            v_high = float(np.mean(np.var(sub_high, axis=0)))
+            base_mean = float(np.mean(self.baseline_mean[6:32])) + float(np.mean(self.baseline_mean[33:59]))
+            base_mean = (base_mean / 2.0) + 1e-6
+            var_per_sc = np.var(active_stack, axis=0)
+        else:
+            half = stack.shape[1] // 2
+            var_per_sc = np.var(stack, axis=0)
+            v_low = float(np.mean(var_per_sc[:half]))
+            v_high = float(np.mean(var_per_sc[half:]))
+            base_mean = float(np.mean(self.baseline_mean)) + 1e-6
+
         rel_var = float(np.mean(var_per_sc)) / base_mean
         self.raw_variance = rel_var
 
-        # Online EMA (fast α=0.5 ≈ span-3; slow α=0.18 ≈ span-10)
+        # Online EMA
         if self._var_ema_fast == 0.0:
             self._var_ema_fast = rel_var
             self._var_ema_slow = rel_var
         else:
-            self._var_ema_fast = 0.50 * rel_var + 0.50 * self._var_ema_fast
-            self._var_ema_slow = 0.18 * rel_var + 0.82 * self._var_ema_slow
+            self._var_ema_fast = 0.55 * rel_var + 0.45 * self._var_ema_fast
+            self._var_ema_slow = 0.20 * rel_var + 0.80 * self._var_ema_slow
         self.var_ema_diff = max(0.0, self._var_ema_fast - self._var_ema_slow)
 
         # Subcarrier skew for transverse 2D spatial tracking across the room
-        half = stack.shape[1] // 2
-        v_low = float(np.mean(var_per_sc[:half]))
-        v_high = float(np.mean(var_per_sc[half:]))
         self.sc_skew = (v_high - v_low) / (v_high + v_low + 1e-5)
 
         # Baseline noise subtraction so motionless room drops cleanly to 0.0%
@@ -208,7 +229,10 @@ class LinkEngine:
         net_var = max(0.0, rel_var - (base_noise * 1.10))
         rel_var_norm = net_var / (net_var + self.activity_scale)
 
-        raw_drop = max(0.0, (self.baseline_rssi or 0.0) - rssi)
+        # Rolling median on RSSI to reject single-packet outlier dips
+        med_rssi = float(np.median(list(self._rssi_hist)[-5:]))
+        self.current_rssi = med_rssi
+        raw_drop = max(0.0, (self.baseline_rssi or 0.0) - med_rssi)
         net_drop = max(0.0, raw_drop - 1.2)
         self.current_rssi_drop = raw_drop
         rssi_drop_norm = net_drop / (net_drop + 7.0) if net_drop > 0 else 0.0
@@ -216,10 +240,14 @@ class LinkEngine:
         instant_pct = float(np.clip(
             ((rel_var_norm + 0.65 * rssi_drop_norm) / 1.65) * 100.0, 0.0, 100.0
         ))
+        
+        # Outlier rejection filter: 5-frame rolling median eliminates transient RF spikes
+        self._pct_hist.append(instant_pct)
+        filt_pct = float(np.median(self._pct_hist))
 
-        # Responsive agile tracking (fast 0.82 attack for instant motion response)
-        alpha = 0.82 if instant_pct > self.current_score else 0.20
-        self.current_score = alpha * instant_pct + (1.0 - alpha) * self.current_score
+        # Responsive agile tracking (fast 0.85 attack for immediate response, 0.38 decay)
+        alpha = 0.85 if filt_pct > self.current_score else 0.38
+        self.current_score = alpha * filt_pct + (1.0 - alpha) * self.current_score
 
         # In-beam with hysteresis
         thresh = self.threshold
@@ -335,17 +363,22 @@ class DualLinkFusion:
         target_x = float(np.clip(target_x, 0.08, 0.92))
         target_y = float(np.clip(target_y, 0.08, 0.92))
 
-        # Ultra-low-latency tracking with deadband to eliminate standing noise
-        dist = math.hypot(target_x - self._x, target_y - self._y)
-        if dist < 0.015:
-            # Deadband: lock completely still when motionless
+        # Velocity clamping: eliminate sudden teleportation jumps (تغيرات مفاجأة)
+        max_step = 0.065  # Max normalized step per frame (~1.6 m/s at 25 Hz)
+        dx = target_x - self._x
+        dy = target_y - self._y
+        step_dist = math.hypot(dx, dy)
+        if step_dist > max_step:
+            target_x = self._x + (dx / step_dist) * max_step
+            target_y = self._y + (dy / step_dist) * max_step
+            step_dist = max_step
+
+        # Deadband & adaptive smoothing (eliminate micro-jitter when standing)
+        if step_dist < 0.016:
+            # Squelch small jitter when standing or micro-moving
             pass
-        elif dist > 0.07:
-            # Agile instant snap when walking
-            alpha = 0.94
-            self._x = alpha * target_x + (1.0 - alpha) * self._x
-            self._y = alpha * target_y + (1.0 - alpha) * self._y
         else:
+            # Rapid, low-lag tracking
             alpha = 0.88
             self._x = alpha * target_x + (1.0 - alpha) * self._x
             self._y = alpha * target_y + (1.0 - alpha) * self._y
@@ -387,8 +420,8 @@ class HeatmapEngine:
         grid_w: int = 100,
         grid_h: int = 80,
         decay: float = 0.978,
-        blob_sigma_px: int = 8,
-        intensity: float = 18.0,
+        blob_sigma_px: int = 5,
+        intensity: float = 16.0,
     ) -> None:
         self.grid_w = grid_w
         self.grid_h = grid_h
@@ -482,7 +515,7 @@ class TrackerUI:
         self.hud_w = width - self.hud_x
 
         # Trail
-        self.trail: deque = deque(maxlen=80)
+        self.trail: deque = deque(maxlen=14)
         self._fps_times: deque = deque(maxlen=30)
 
         cv2.namedWindow(title, cv2.WINDOW_NORMAL)
@@ -615,35 +648,50 @@ class TrackerUI:
             cv2.putText(canvas, f"Link2: {s2_pct}%", (self.room_x0 + 4, self.room_y0 + 32),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.42, s2_col, 1, cv2.LINE_AA)
 
-        # Person trail
+        # Person trail (sleek, short fading line - reduced clutter)
         if len(self.trail) >= 2:
             pts = list(self.trail)
-            for i in range(1, len(pts)):
-                alpha = i / len(pts)
-                col = (int(60 * alpha), int(190 * alpha), int(80 * alpha))
-                cv2.line(canvas, pts[i - 1], pts[i], col, 2, cv2.LINE_AA)
+            n_pts = len(pts)
+            for i in range(1, n_pts):
+                alpha = (i / n_pts) ** 1.8
+                thick = 2 if i >= n_pts - 3 else 1
+                col = (int(35 * alpha), int(195 * alpha), int(65 * alpha))
+                cv2.line(canvas, pts[i - 1], pts[i], col, thick, cv2.LINE_AA)
 
         # Person dot (Stays visible and locked when stationary!)
         if presence:
             pdx, pdy = self.to_px(x, y)
             if not is_stationary:
                 self.trail.append((pdx, pdy))
+            else:
+                if len(self.trail) > 0:
+                    self.trail.popleft()
 
             dot_col = COLOR_CYAN if is_stationary else COLOR_GREEN
-            # Outer glow
-            for r, a in [(24, 0.18), (17, 0.28), (11, 0.55)]:
+            # Compact, sharp outer glow (reduced aura size)
+            for r, a in [(13, 0.20), (9, 0.35), (6, 0.55)]:
                 overlay = canvas.copy()
                 cv2.circle(overlay, (pdx, pdy), r, dot_col, -1)
                 cv2.addWeighted(overlay, a, canvas, 1 - a, 0, canvas)
 
-            cv2.circle(canvas, (pdx, pdy), 10, dot_col, 2, cv2.LINE_AA)
-            cv2.circle(canvas, (pdx, pdy), 5, dot_col, -1, cv2.LINE_AA)
+            cv2.circle(canvas, (pdx, pdy), 7, dot_col, 1, cv2.LINE_AA)
+            cv2.circle(canvas, (pdx, pdy), 4, dot_col, -1, cv2.LINE_AA)
             cv2.circle(canvas, (pdx, pdy), 2, (255, 255, 255), -1)
 
-            # Crosshairs
-            ch_col = (70, 110, 120) if is_stationary else (50, 100, 55)
-            cv2.line(canvas, (self.room_x0, pdy), (rx1, pdy), ch_col, 1)
-            cv2.line(canvas, (pdx, self.room_y0), (pdx, ry1), ch_col, 1)
+            # Precise reticle ticks around the dot instead of room-spanning green lines
+            ch_col = (80, 140, 150) if is_stationary else (50, 140, 70)
+            r_inner, r_outer = 10, 20
+            cv2.line(canvas, (pdx - r_outer, pdy), (pdx - r_inner, pdy), ch_col, 1, cv2.LINE_AA)
+            cv2.line(canvas, (pdx + r_inner, pdy), (pdx + r_outer, pdy), ch_col, 1, cv2.LINE_AA)
+            cv2.line(canvas, (pdx, pdy - r_outer), (pdx, pdy - r_inner), ch_col, 1, cv2.LINE_AA)
+            cv2.line(canvas, (pdx, pdy + r_inner), (pdx, pdy + r_outer), ch_col, 1, cv2.LINE_AA)
+
+            # Subtle dark room alignment guides (very faint neutral)
+            guide_col = (30, 35, 45)
+            cv2.line(canvas, (self.room_x0, pdy), (pdx - r_outer, pdy), guide_col, 1)
+            cv2.line(canvas, (pdx + r_outer, pdy), (rx1, pdy), guide_col, 1)
+            cv2.line(canvas, (pdx, self.room_y0), (pdx, pdy - r_outer), guide_col, 1)
+            cv2.line(canvas, (pdx, pdy + r_outer), (pdx, ry1), guide_col, 1)
 
             # Coordinate label
             tag = f"({x:.2f}, {y:.2f}) [STILL]" if is_stationary else f"({x:.2f}, {y:.2f})"
@@ -933,8 +981,8 @@ def main() -> int:
     eng1 = LinkEngine("link1", threshold=threshold)
     eng2 = LinkEngine("link2", threshold=threshold)
     fusion = DualLinkFusion(smooth_alpha=0.35)
-    kalman = KalmanTracker(process_noise=6e-2, measurement_noise=1.5e-3)
-    heatmap = HeatmapEngine(grid_w=100, grid_h=80, decay=0.978, blob_sigma_px=8, intensity=18.0)
+    kalman = KalmanTracker(process_noise=0.10, measurement_noise=1e-3)
+    heatmap = HeatmapEngine(grid_w=100, grid_h=80, decay=0.978, blob_sigma_px=5, intensity=16.0)
 
     # --- Setup UI ---
     ui: Optional[TrackerUI] = None

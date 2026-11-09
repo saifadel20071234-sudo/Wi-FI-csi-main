@@ -41,7 +41,7 @@ class Visualizer:
         self.win_name = vis.get("window_name", "WiFi CSI Sensing")
         self.show_raw = bool(vis.get("show_raw", False))
 
-        self.trail: deque = deque(maxlen=60)
+        self.trail: deque = deque(maxlen=14)
         self._fps_times: deque = deque(maxlen=30)
         self._last_frame_ts: Optional[float] = None
 
@@ -129,9 +129,9 @@ class Visualizer:
         px, py = self.to_px(state["x"], state["y"])
         self.trail.append((px, py))
         self._draw_trail(canvas)
-        cv2.circle(canvas, (px, py), 13, GREEN, 2)
-        cv2.circle(canvas, (px, py), 6, GREEN, -1)
-        cv2.circle(canvas, (px, py), 3, (255, 255, 255), -1)
+        cv2.circle(canvas, (px, py), 7, GREEN, 1)
+        cv2.circle(canvas, (px, py), 4, GREEN, -1)
+        cv2.circle(canvas, (px, py), 2, (255, 255, 255), -1)
 
     def _draw_blobs(self, canvas: np.ndarray, state: Dict[str, Any]) -> None:
         """Draw OpenCV-detected presence blobs: contour (shape) + centroid label."""
