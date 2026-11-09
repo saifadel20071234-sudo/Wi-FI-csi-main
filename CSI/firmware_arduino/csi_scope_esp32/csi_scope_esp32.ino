@@ -15,23 +15,22 @@
 #include "rom/ets_sys.h"
 
 // -----------------------------------------------------------------------------
-// WiFi Credentials (Mobile Hotspot is Primary)
+// WiFi Credentials (Supports Hotspot or Access Point)
 // -----------------------------------------------------------------------------
 const char* PRIMARY_SSID = "S24 Ultra saif";
 const char* PRIMARY_PASS = "123456789ss";
 
-// Backup
-const char* BACKUP_SSID  = "venom";
-const char* BACKUP_PASS  = "12345678";
+// Optional secondary Access Point (if user configures an AP)
+const char* BACKUP_SSID  = "CSI_AP";
+const char* BACKUP_PASS  = "123456789";
 
-// 20 Hz is optimal for phone hotspot stability (avoids ping flood throttling)
-#define CONFIG_SEND_FREQUENCY 20
+// 25 Hz is the sweet spot: fast motion capture, zero rate-limit drops
+#define CONFIG_SEND_FREQUENCY 25
 
 static uint32_t s_count = 0;
 static esp_ping_handle_t ping_handle = NULL;
 static bool csi_initialized = false;
 static uint8_t s_bssid[6] = {0};
-static bool using_backup = false;
 
 // -----------------------------------------------------------------------------
 // Fast CSI Receive Callback: outputs via ROM ets_printf (non-blocking, fast)
@@ -152,18 +151,14 @@ void onWiFiEvent(WiFiEvent_t event, WiFiEventInfo_t info) {
 
         case ARDUINO_EVENT_WIFI_STA_DISCONNECTED: {
             uint8_t reason = info.wifi_sta_disconnected.reason;
-            Serial.printf("[WiFi] Disconnected from %s! (Reason Code: %d)\n",
-                          using_backup ? BACKUP_SSID : PRIMARY_SSID, reason);
-            if (reason == 36) {
-                Serial.println("  -> Reason 36: Cipher Mismatch (Wi-Fi 6 / GCMP)! On phone Hotspot -> Turn OFF 'Wi-Fi 6 standard' & set Security to WPA2-Personal.");
-            } else if (reason == 201) {
-                Serial.println("  -> Reason 201: Network not found! Check hotspot/AP is ON & 2.4 GHz.");
+            Serial.printf("[WiFi] Disconnected! (Reason Code: %d)\n", reason);
+            if (reason == 201) {
+                Serial.println("  -> Reason 201: SSID not found! Check hotspot/AP is ON & 2.4 GHz.");
             } else if (reason == 15 || reason == 202) {
-                Serial.println("  -> Reason 15/202: 4-Way Handshake Timeout! Check password.");
+                Serial.println("  -> Reason 15/202: 4-Way Handshake Timeout! Check password or PMF.");
             } else if (reason == 2) {
-                Serial.println("  -> Reason 2: Auth Expired! Check password on router/hotspot.");
+                Serial.println("  -> Reason 2: Auth Expired!");
             }
-            csi_initialized = false;
             stop_ping();
             break;
         }
@@ -193,12 +188,14 @@ void setup() {
 }
 
 void loop() {
-    // Keep WiFi alive: status log every 5 seconds if not connected
+    // Keep WiFi alive: retry connection if lost
     if (WiFi.status() != WL_CONNECTED) {
         static unsigned long last_retry = 0;
         if (millis() - last_retry > 5000) {
             last_retry = millis();
-            Serial.printf(">> Waiting for WiFi [%s] ... (Turn ON Hotspot 2.4GHz)\n", PRIMARY_SSID);
+            Serial.printf("Retrying connection to [%s] ...\n", PRIMARY_SSID);
+            WiFi.disconnect();
+            WiFi.begin(PRIMARY_SSID, PRIMARY_PASS);
         }
     }
     delay(1000);

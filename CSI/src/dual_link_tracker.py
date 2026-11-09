@@ -98,9 +98,7 @@ class LinkEngine:
 
         self.baseline_mean: Optional[np.ndarray] = None
         self.baseline_rssi: Optional[float] = None
-        self.baseline_var: Optional[float] = None
         self.calib_start: float = time.monotonic()
-        self._pct_hist: deque = deque(maxlen=5)
         self._calib_amps: List[np.ndarray] = []
         self._calib_rssis: List[float] = []
 
@@ -138,12 +136,10 @@ class LinkEngine:
     def recalibrate(self) -> None:
         self.baseline_mean = None
         self.baseline_rssi = None
-        self.baseline_var = None
         self.calib_start = time.monotonic()
         self._calib_amps.clear()
         self._calib_rssis.clear()
         self._amp_hist.clear()
-        self._pct_hist.clear()
         self._var_ema_fast = 0.0
         self._var_ema_slow = 0.0
         self.var_ema_diff = 0.0
@@ -174,9 +170,6 @@ class LinkEngine:
                 amps_arr = np.asarray(self._calib_amps, dtype=np.float32)
                 self.baseline_mean = np.mean(amps_arr, axis=0)
                 self.baseline_rssi = float(np.mean(self._calib_rssis))
-                base_vars = np.var(amps_arr, axis=0)
-                base_mean = float(np.mean(self.baseline_mean)) + 1e-6
-                self.baseline_var = float(np.mean(base_vars)) / base_mean
             return 0.0
 
         # 2) Score computation
@@ -198,27 +191,17 @@ class LinkEngine:
             self._var_ema_slow = 0.18 * rel_var + 0.82 * self._var_ema_slow
         self.var_ema_diff = max(0.0, self._var_ema_fast - self._var_ema_slow)
 
-        # Subtract baseline noise so resting/still state is rock-solid 0.0%
-        base_noise = self.baseline_var if self.baseline_var is not None else 0.05
-        net_var = max(0.0, rel_var - (base_noise * 1.20))
-        rel_var_norm = net_var / (net_var + self.activity_scale)
-
-        raw_drop = max(0.0, (self.baseline_rssi or 0.0) - rssi)
-        net_drop = max(0.0, raw_drop - 1.2)
-        self.current_rssi_drop = raw_drop
-        rssi_drop_norm = net_drop / (net_drop + 7.0) if net_drop > 0 else 0.0
+        rel_var_norm = rel_var / (rel_var + self.activity_scale)
+        rssi_drop = max(0.0, (self.baseline_rssi or 0.0) - rssi)
+        self.current_rssi_drop = rssi_drop
+        rssi_drop_norm = rssi_drop / (rssi_drop + 8.0) if rssi_drop > 0 else 0.0
 
         instant_pct = float(np.clip(
-            ((rel_var_norm + 0.65 * rssi_drop_norm) / 1.65) * 100.0, 0.0, 100.0
+            ((rel_var_norm + 0.6 * rssi_drop_norm) / 1.6) * 100.0, 0.0, 100.0
         ))
 
-        # 3-frame rolling median filter for outlier rejection
-        self._pct_hist.append(instant_pct)
-        filt_pct = float(np.median(self._pct_hist)) if len(self._pct_hist) >= 3 else instant_pct
-
-        # Smooth, calm temporal response (rise smoothly 0.24, settle gently 0.09)
-        alpha = 0.24 if filt_pct > self.current_score else 0.09
-        self.current_score = alpha * filt_pct + (1.0 - alpha) * self.current_score
+        alpha = 0.55 if instant_pct > self.current_score else 0.20
+        self.current_score = alpha * instant_pct + (1.0 - alpha) * self.current_score
 
         # In-beam with hysteresis
         thresh = self.threshold
@@ -286,55 +269,42 @@ class DualLinkFusion:
         if not presence and score1 < 15.0 and (score2 < 15.0 or not has_link2):
             return self._x, self._y, 0.0, False
 
-        # --- FULL-ROOM DUAL-LINK 2D FUSION (Both Links Active) ---
+        # --- DUAL-LINK 2D FUSION ---
         if has_link2:
-            # Full room coverage:
-            # Link 1 disturbance + RSSI drop maps the X axis across 0.12 to 0.88
-            norm_d1 = min(1.0, rssi_drop1 / 8.0) if rssi_drop1 > 0 else 0.0
-            norm_s1 = min(1.0, score1 / 75.0)
-            target_x = 0.88 - 0.76 * (0.65 * norm_d1 + 0.35 * norm_s1)
+            # X estimate:
+            # Link 1: ESP1 is at x=0.0 (high drop), AP1 is at x=1.0 (low drop).
+            # When Link 2 is active, it confirms person is near x=BEAM2_X (0.65).
+            d1_norm = min(1.0, rssi_drop1 / 16.0) if rssi_drop1 > 0 else 0.0
+            x_from_l1 = 0.85 - 0.70 * d1_norm  # High drop -> x closer to 0.15; low drop -> x closer to 0.85
             
-            # Link 2 disturbance + RSSI drop maps the Y axis across 0.12 to 0.88
-            norm_d2 = min(1.0, rssi_drop2 / 8.0) if rssi_drop2 > 0 else 0.0
-            norm_s2 = min(1.0, score2 / 75.0)
-            target_y = 0.12 + 0.76 * (0.65 * norm_d2 + 0.35 * norm_s2)
+            w_l2_beam = min(1.0, score2 / 70.0)
+            target_x = (1.0 - 0.45 * w_l2_beam) * x_from_l1 + (0.45 * w_l2_beam) * self.BEAM2_X
 
-        # --- FULL-ROOM SINGLE-LINK MODE (Link 1 only) ---
-        else:
-            # Link 1 spans X completely: 0.12 to 0.88
-            norm_d1 = min(1.0, rssi_drop1 / 8.0) if rssi_drop1 > 0 else 0.0
-            norm_s1 = min(1.0, score1 / 80.0)
-            target_x = 0.88 - 0.76 * norm_d1
+            # Y estimate:
+            # Link 2: AP2 is at y=0.0 (low drop), ESP2 is at y=1.0 (high drop).
+            # When Link 1 is active, it confirms person is near y=BEAM1_Y (0.35).
+            d2_norm = min(1.0, rssi_drop2 / 16.0) if rssi_drop2 > 0 else 0.0
+            y_from_l2 = 0.15 + 0.70 * d2_norm  # High drop -> y closer to 0.85; low drop -> y closer to 0.15
             
-            # Y smoothly sweeps across room based on spatial multipath
-            phase = target_x * math.pi * 2.0
-            target_y = 0.50 + 0.32 * math.sin(phase) * (norm_s1 ** 0.5)
+            w_l1_beam = min(1.0, score1 / 70.0)
+            target_y = (1.0 - 0.45 * w_l1_beam) * y_from_l2 + (0.45 * w_l1_beam) * self.BEAM1_Y
 
-        target_x = float(np.clip(target_x, 0.08, 0.92))
-        target_y = float(np.clip(target_y, 0.08, 0.92))
-
-        # Deadzone & velocity damping:
-        # If the person stopped moving (change < 0.025), hold position rock-solid (zero jitter)
-        dist = math.hypot(target_x - self._x, target_y - self._y)
-        if presence:
-            if dist < 0.025:
-                # Still within deadzone: lock position solid
-                pass
-            else:
-                # Slower, calm, elegant glide (max step 0.035 per frame)
-                max_step = 0.035
-                step_x = np.clip(target_x - self._x, -max_step, max_step)
-                step_y = np.clip(target_y - self._y, -max_step, max_step)
-                self._x += 0.22 * step_x
-                self._y += 0.22 * step_y
+        # --- SINGLE-LINK FALLBACK (Link 1 only) ---
         else:
-            # Slowly rest towards center when nobody is in the room
-            self._x = 0.98 * self._x + 0.02 * 0.50
-            self._y = 0.98 * self._y + 0.02 * 0.50
+            d1_norm = min(1.0, rssi_drop1 / 16.0) if rssi_drop1 > 0 else 0.0
+            target_x = 0.85 - 0.70 * d1_norm
+            # Y gently modulates around the horizontal beam
+            score_factor = (score1 / 100.0) - 0.5
+            target_y = self.BEAM1_Y + 0.25 * score_factor
+
+        # Kalman or EMA smoothing towards target
+        alpha = self.smooth_alpha if presence else 0.08
+        self._x = alpha * target_x + (1.0 - alpha) * self._x
+        self._y = alpha * target_y + (1.0 - alpha) * self._y
 
         return (
-            float(np.clip(self._x, 0.06, 0.94)),
-            float(np.clip(self._y, 0.06, 0.94)),
+            float(np.clip(self._x, 0.05, 0.95)),
+            float(np.clip(self._y, 0.05, 0.95)),
             float(presence_score),
             presence,
         )
@@ -961,7 +931,7 @@ def main() -> int:
     eng1 = LinkEngine("link1", threshold=threshold)
     eng2 = LinkEngine("link2", threshold=threshold)
     fusion = DualLinkFusion(smooth_alpha=0.35)
-    kalman = KalmanTracker(process_noise=1e-3, measurement_noise=4e-2)
+    kalman = KalmanTracker(process_noise=1e-3, measurement_noise=1.5e-2)
     heatmap = HeatmapEngine(grid_w=100, grid_h=80, decay=0.978, blob_sigma_px=8, intensity=18.0)
 
     # --- Setup UI ---
@@ -971,7 +941,7 @@ def main() -> int:
     else:
         print(f">> Console mode. Threshold: {threshold}%. Press Ctrl+C to quit.\n")
 
-    has_link2 = (demo_source is not None) or (eng2.online and not eng2.calibrating)
+    has_link2 = (demo_source is not None) or (reader2 is not None)
     last_seq1 = last_seq2 = -1
     x_smooth = y_smooth = 0.5
     presence = False
@@ -1001,12 +971,6 @@ def main() -> int:
                 eng1.update(frame1)
             if frame2 is not None:
                 eng2.update(frame2)
-
-            # Dynamically determine if Link 2 is actively streaming
-            if demo_source is not None:
-                has_link2 = True
-            else:
-                has_link2 = eng2.online and not eng2.calibrating
 
             # Fuse into 2D position
             x_raw, y_raw, pres_score, presence = fusion.fuse(
@@ -1069,7 +1033,7 @@ def main() -> int:
                         end="", flush=True,
                     )
 
-            time.sleep(0.022)
+            time.sleep(0.012)
 
             if args.seconds > 0 and (time.monotonic() - start_t) >= args.seconds:
                 break
