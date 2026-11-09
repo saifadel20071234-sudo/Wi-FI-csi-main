@@ -1060,7 +1060,7 @@ def main() -> int:
             reader2 = CSIReader(device_id="esp32_link2", port=port2, baud=args.baud, timeout=1.0)
             reader2.start()
         else:
-            print("[WARNING] Only 1 ESP32 found — running in single-link mode (1D position only)")
+            print(">> Running in Single-Link Mode (2D Spatial Tracking with S24 Ultra saif)")
 
     # --- Initialize engines ---
     eng1 = LinkEngine("link1", threshold=threshold)
