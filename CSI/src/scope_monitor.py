@@ -86,7 +86,7 @@ class SingleLinkEngine:
         window_frames: int = 20,
         calibration_seconds: float = 3.0,
         threshold: float = 53.0,
-        activity_scale: float = 0.15,
+        activity_scale: float = 0.12,
     ) -> None:
         self.window_frames = window_frames
         self.calibration_seconds = calibration_seconds
@@ -127,6 +127,9 @@ class SingleLinkEngine:
         self._cross_peak_score: float = 0.0
         self._cross_peak_drop: float = 0.0
         self._cross_peak_ema_diff: float = 0.0
+        self._cross_crests: int = 1
+        self._cross_prev_score: float = 0.0
+        self._cross_falling: bool = False
         self._cooldown_until: float = 0.0
         self.recent_events: deque = deque(maxlen=5)
 
@@ -147,6 +150,9 @@ class SingleLinkEngine:
         self.var_ema_diff = 0.0
         self.current_score = 0.0
         self._in_crossing = False
+        self._cross_crests = 1
+        self._cross_prev_score = 0.0
+        self._cross_falling = False
         self._cooldown_until = 0.0
         self.instant_people = 0
 
@@ -155,6 +161,9 @@ class SingleLinkEngine:
         self.total_crossings = 0
         self.recent_events.clear()
         self._in_crossing = False
+        self._cross_crests = 1
+        self._cross_prev_score = 0.0
+        self._cross_falling = False
         self._cooldown_until = 0.0
         self.instant_people = 0
 
@@ -174,20 +183,32 @@ class SingleLinkEngine:
         return time.monotonic() < self._cooldown_until
 
     # ── Crowd classifier (1, 2, or 3+ People) ──────────────────────────────────
-    def _classify(self, duration: float, peak_score: float, rssi_drop: float) -> Tuple[int, str]:
+    def _classify(self, duration: float, peak_score: float, rssi_drop: float, n_crests: int = 1) -> Tuple[int, str]:
         """Return (count, label) for a completed crossing event."""
-        if peak_score >= 90.0 or (duration >= 1.3 and rssi_drop >= 17.0):
+        # 3+ People: 3 distinct crossing waves or massive saturation (>92%)
+        if n_crests >= 3 or peak_score >= 92.0:
             return 3, "3+ People"
-        elif peak_score >= 74.0 or (duration >= 0.9 and rssi_drop >= 9.0):
+        # 2 People: score clearly past single-person peak (>=71%), dual crests, or heavy 2-body occlusion
+        elif (
+            peak_score >= 71.0
+            or (n_crests >= 2 and peak_score >= 60.0)
+            or (duration >= 1.6 and peak_score >= 68.0)
+            or (duration >= 1.3 and rssi_drop >= 7.0)
+        ):
             return 2, "2 People"
         return 1, "1 Person"
 
     # ── Live instant-people estimate (while beam is active) ───────────────────
-    def _estimate_instant(self, peak_score: float, rssi_drop: float, elapsed: float) -> int:
+    def _estimate_instant(self, peak_score: float, rssi_drop: float, elapsed: float, n_crests: int = 1) -> int:
         """Real-time crowd estimate (1, 2, or 3+ people)."""
-        if peak_score >= 90.0 or (elapsed >= 1.2 and rssi_drop >= 17.0):
+        if n_crests >= 3 or peak_score >= 92.0:
             return 3
-        elif peak_score >= 74.0 or (elapsed >= 0.7 and rssi_drop >= 9.0):
+        elif (
+            peak_score >= 71.0
+            or (n_crests >= 2 and peak_score >= 60.0)
+            or (elapsed >= 1.6 and peak_score >= 68.0)
+            or (elapsed >= 1.3 and rssi_drop >= 7.0)
+        ):
             return 2
         return 1
 
@@ -249,10 +270,10 @@ class SingleLinkEngine:
         self.current_rssi_drop = raw_drop
         rssi_drop = raw_drop
         net_drop = max(0.0, raw_drop - 1.2)
-        rssi_drop_norm = net_drop / (net_drop + 7.5) if net_drop > 0 else 0.0
+        rssi_drop_norm = net_drop / (net_drop + 6.0) if net_drop > 0 else 0.0
 
         instant_pct = float(np.clip(
-            ((rel_var_norm + 0.65 * rssi_drop_norm) / 1.65) * 100.0, 0.0, 100.0
+            ((rel_var_norm + 0.70 * rssi_drop_norm) / 1.70) * 100.0, 0.0, 100.0
         ))
 
         # 3-frame rolling median to absorb solitary packet spike noise
@@ -280,35 +301,49 @@ class SingleLinkEngine:
                 self._cross_peak_score = self.current_score
                 self._cross_peak_drop = rssi_drop
                 self._cross_peak_ema_diff = self.var_ema_diff
+                self._cross_crests = 1
+                self._cross_prev_score = self.current_score
+                self._cross_falling = False
             else:
                 self._cross_peak_score = max(self._cross_peak_score, self.current_score)
                 self._cross_peak_drop = max(self._cross_peak_drop, rssi_drop)
                 self._cross_peak_ema_diff = max(self._cross_peak_ema_diff, self.var_ema_diff)
 
+                # Track crests/valleys (e.g. 2 people crossing in tandem/file inside same event)
+                if self.current_score < (self._cross_prev_score - 4.0):
+                    self._cross_falling = True
+                elif self._cross_falling and (self.current_score > self._cross_prev_score + 4.0):
+                    self._cross_crests = min(3, self._cross_crests + 1)
+                    self._cross_falling = False
+                self._cross_prev_score = self.current_score
+
             elapsed_cross = now - self._cross_start_t
             self.instant_people = self._estimate_instant(
-                self._cross_peak_score, self._cross_peak_drop, elapsed_cross
+                self._cross_peak_score, self._cross_peak_drop, elapsed_cross, self._cross_crests
             )
 
         # BEAM CLEAR
         elif self.current_score < hysteresis_low:
             if self._in_crossing:
                 duration = now - self._cross_start_t
-                if duration >= 0.30 and not self.in_cooldown:
+                if duration >= 0.28 and not self.in_cooldown:
                     count_added, kind = self._classify(
-                        duration, self._cross_peak_score, self._cross_peak_drop
+                        duration, self._cross_peak_score, self._cross_peak_drop, self._cross_crests
                     )
                     self.total_crossings += count_added
                     self.recent_events.append((
                         time.strftime("%H:%M:%S"), count_added, kind,
                         self._cross_peak_score, duration
                     ))
-                    self._cooldown_until = now + 2.5
+                    # Quick 0.6s cooldown: keeps single person from double-counting, allows 2nd person right behind
+                    self._cooldown_until = now + 0.6
 
                 self._in_crossing = False
                 self._cross_peak_score = 0.0
                 self._cross_peak_drop = 0.0
                 self._cross_peak_ema_diff = 0.0
+                self._cross_crests = 1
+                self._cross_falling = False
                 self.instant_people = 0
 
         return self.current_score
