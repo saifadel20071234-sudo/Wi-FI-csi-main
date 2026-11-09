@@ -26,3 +26,7 @@ $RECYCLE.BIN/
 # Logs and runtime artifacts
 *.log
 csii/
+
+# Local scratch and videos
+scratch/
+*.mp4

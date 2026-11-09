@@ -247,7 +247,7 @@ class DualLinkFusion:
     BEAM1_Y = 0.35
     BEAM2_X = 0.65
 
-    def __init__(self, smooth_alpha: float = 0.35, stationary_hold_sec: float = 8.0) -> None:
+    def __init__(self, smooth_alpha: float = 0.35, stationary_hold_sec: float = 3600.0) -> None:
         self.smooth_alpha = smooth_alpha
         self.stationary_hold_sec = stationary_hold_sec
         self._x: float = 0.50
@@ -256,6 +256,7 @@ class DualLinkFusion:
         self.last_valid_y: float = 0.50
         self.last_motion_t: float = 0.0
         self.is_stationary: bool = False
+        self.has_detected: bool = False
         self._presence_score: float = 0.0
 
     def fuse(
@@ -279,12 +280,13 @@ class DualLinkFusion:
         static_shadow = max_drop >= 1.3
 
         if active_motion:
+            self.has_detected = True
             self.last_motion_t = now
             self.is_stationary = False
             presence = True
-        elif (now - self.last_motion_t) < self.stationary_hold_sec or static_shadow:
+        elif self.has_detected:
             # Person stopped moving but is still present in the room:
-            # Hold presence and lock position so the target NEVER disappears!
+            # Firmly lock position onto last coordinates so the point NEVER disappears!
             self.is_stationary = True
             presence = True
         else:
@@ -320,21 +322,29 @@ class DualLinkFusion:
 
         # --- FULL-ROOM SINGLE-LINK 2D TRACKING (1 ESP32) ---
         else:
-            norm_drop = min(1.0, rssi_drop1 / 5.0) if rssi_drop1 > 0 else 0.0
-            norm_score = min(1.0, score1 / 85.0)
-            act_x = 0.60 * norm_drop + 0.40 * norm_score
+            # Full dynamic range matching video speed & left/right room glide
+            norm_drop = min(1.0, rssi_drop1 / 3.6) if rssi_drop1 > 0 else 0.0
+            score_excess = max(0.0, score1 - 36.0)
+            norm_score = min(1.0, score_excess / 46.0)
+            act_x = 0.50 * norm_drop + 0.50 * norm_score
             target_x = 0.88 - 0.76 * act_x
 
-            skew_norm = float(np.clip(sc_skew1 * 2.8, -1.0, 1.0))
-            target_y = 0.50 + 0.38 * skew_norm
+            skew_norm = float(np.clip(sc_skew1 * 4.6, -1.0, 1.0))
+            target_y = 0.50 + 0.40 * skew_norm
 
         target_x = float(np.clip(target_x, 0.08, 0.92))
         target_y = float(np.clip(target_y, 0.08, 0.92))
 
-        # Ultra-low-latency tracking (alpha=0.88) with minimal deadband
+        # Ultra-low-latency tracking with deadband to eliminate standing noise
         dist = math.hypot(target_x - self._x, target_y - self._y)
-        if dist < 0.012:
+        if dist < 0.015:
+            # Deadband: lock completely still when motionless
             pass
+        elif dist > 0.07:
+            # Agile instant snap when walking
+            alpha = 0.94
+            self._x = alpha * target_x + (1.0 - alpha) * self._x
+            self._y = alpha * target_y + (1.0 - alpha) * self._y
         else:
             alpha = 0.88
             self._x = alpha * target_x + (1.0 - alpha) * self._x
@@ -358,6 +368,7 @@ class DualLinkFusion:
         self.last_valid_y = 0.5
         self.last_motion_t = 0.0
         self.is_stationary = False
+        self.has_detected = False
 
 
 # =============================================================================
