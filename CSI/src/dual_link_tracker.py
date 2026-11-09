@@ -29,7 +29,6 @@ from __future__ import annotations
 
 import argparse
 import math
-import os
 import sys
 import time
 from collections import deque
@@ -85,8 +84,8 @@ class LinkEngine:
         link_id: str,
         window_frames: int = 20,
         calibration_seconds: float = 3.0,
-        threshold: float = 42.0,
-        activity_scale: float = 0.08,
+        threshold: float = 50.0,
+        activity_scale: float = 0.15,
     ) -> None:
         self.link_id = link_id
         self.window_frames = window_frames
@@ -206,11 +205,11 @@ class LinkEngine:
 
         # Baseline noise subtraction so motionless room drops cleanly to 0.0%
         base_noise = self.baseline_var if self.baseline_var is not None else 0.04
-        net_var = max(0.0, rel_var - (base_noise * 1.03))
+        net_var = max(0.0, rel_var - (base_noise * 1.10))
         rel_var_norm = net_var / (net_var + self.activity_scale)
 
         raw_drop = max(0.0, (self.baseline_rssi or 0.0) - rssi)
-        net_drop = max(0.0, raw_drop - 0.7)
+        net_drop = max(0.0, raw_drop - 1.2)
         self.current_rssi_drop = raw_drop
         rssi_drop_norm = net_drop / (net_drop + 7.0) if net_drop > 0 else 0.0
 
@@ -219,7 +218,7 @@ class LinkEngine:
         ))
 
         # Responsive agile tracking (fast 0.82 attack for instant motion response)
-        alpha = 0.85 if instant_pct > self.current_score else 0.18
+        alpha = 0.82 if instant_pct > self.current_score else 0.20
         self.current_score = alpha * instant_pct + (1.0 - alpha) * self.current_score
 
         # In-beam with hysteresis
@@ -248,7 +247,7 @@ class DualLinkFusion:
     BEAM1_Y = 0.35
     BEAM2_X = 0.65
 
-    def __init__(self, smooth_alpha: float = 0.35, stationary_hold_sec: float = 10.0) -> None:
+    def __init__(self, smooth_alpha: float = 0.35, stationary_hold_sec: float = 8.0) -> None:
         self.smooth_alpha = smooth_alpha
         self.stationary_hold_sec = stationary_hold_sec
         self._x: float = 0.50
@@ -277,7 +276,7 @@ class DualLinkFusion:
 
         max_drop = max(rssi_drop1, rssi_drop2 if has_link2 else 0.0)
         # Static body presence: human body absorbs RF beam even when motionless
-        static_shadow = max_drop >= 1.0
+        static_shadow = max_drop >= 1.3
 
         if active_motion:
             self.last_motion_t = now
@@ -321,15 +320,13 @@ class DualLinkFusion:
 
         # --- FULL-ROOM SINGLE-LINK 2D TRACKING (1 ESP32) ---
         else:
-            # Full dynamic range: walking in room spans the full canvas
-            norm_drop = min(1.0, rssi_drop1 / 3.6) if rssi_drop1 > 0 else 0.0
-            score_excess = max(0.0, score1 - 36.0)
-            norm_score = min(1.0, score_excess / 46.0)
-            act_x = 0.50 * norm_drop + 0.50 * norm_score
+            norm_drop = min(1.0, rssi_drop1 / 5.0) if rssi_drop1 > 0 else 0.0
+            norm_score = min(1.0, score1 / 85.0)
+            act_x = 0.60 * norm_drop + 0.40 * norm_score
             target_x = 0.88 - 0.76 * act_x
 
-            skew_norm = float(np.clip(sc_skew1 * 4.6, -1.0, 1.0))
-            target_y = 0.50 + 0.40 * skew_norm
+            skew_norm = float(np.clip(sc_skew1 * 2.8, -1.0, 1.0))
+            target_y = 0.50 + 0.38 * skew_norm
 
         target_x = float(np.clip(target_x, 0.08, 0.92))
         target_y = float(np.clip(target_y, 0.08, 0.92))
@@ -480,144 +477,10 @@ class TrackerUI:
         cv2.namedWindow(title, cv2.WINDOW_NORMAL)
         cv2.resizeWindow(title, width, height)
 
-        # Load Thermal Human Avatar Sprite
-        asset_path = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets", "thermal_human.png"
-        )
-        self.avatar_sprite: Optional[np.ndarray] = None
-        if os.path.exists(asset_path):
-            try:
-                self.avatar_sprite = cv2.imread(asset_path, cv2.IMREAD_UNCHANGED)
-            except Exception:
-                self.avatar_sprite = None
-
     def to_px(self, x: float, y: float) -> Tuple[int, int]:
         px = int(self.room_x0 + np.clip(x, 0, 1) * self.room_w)
         py = int(self.room_y0 + np.clip(y, 0, 1) * self.room_h)
         return px, py
-
-    def _draw_thermal_avatar(
-        self,
-        canvas: np.ndarray,
-        cx: int,
-        cy: int,
-        is_stationary: bool,
-        pres_score: float,
-        norm_x: float = 0.5,
-        norm_y: float = 0.5,
-    ) -> None:
-        """Renders the authentic 3D holographic wireframe human avatar with futuristic HUD radar."""
-        rx1 = self.room_x0 + self.room_w
-        ry1 = self.room_y0 + self.room_h
-
-        # 1. Holographic Ground Pedestal under feet at (cx, cy)
-        ped_col = COLOR_CYAN if is_stationary else (50, 220, 255)
-        ped_w = 34
-        ped_h = 13
-
-        # Soft radar floor halo
-        overlay = canvas.copy()
-        cv2.ellipse(overlay, (cx, cy), (int(ped_w * 1.5), int(ped_h * 1.5)), 0, 0, 360, ped_col, -1, cv2.LINE_AA)
-        cv2.addWeighted(overlay, 0.20 if is_stationary else 0.30, canvas, 0.80 if is_stationary else 0.70, 0, canvas)
-
-        # Concentric rings with cardinal ticks
-        cv2.ellipse(canvas, (cx, cy), (ped_w, ped_h), 0, 0, 360, ped_col, 2, cv2.LINE_AA)
-        cv2.ellipse(canvas, (cx, cy), (int(ped_w * 0.5), int(ped_h * 0.5)), 0, 0, 360, (255, 255, 255), 1, cv2.LINE_AA)
-        cv2.line(canvas, (cx - ped_w - 3, cy), (cx - ped_w + 3, cy), ped_col, 2)
-        cv2.line(canvas, (cx + ped_w - 3, cy), (cx + ped_w + 3, cy), ped_col, 2)
-        cv2.line(canvas, (cx, cy - ped_h - 2), (cx, cy - ped_h + 2), ped_col, 2)
-        cv2.line(canvas, (cx, cy + ped_h - 2), (cx, cy + ped_h + 2), ped_col, 2)
-        cv2.circle(canvas, (cx, cy), 3, (255, 255, 255), -1, cv2.LINE_AA)
-
-        # 2. Render Authentic 3D Hologram Avatar (Large, crisp, prominent!)
-        target_h = 118  # High-tech prominent human figure
-        if self.avatar_sprite is not None and self.avatar_sprite.ndim == 3 and self.avatar_sprite.shape[2] == 4:
-            aspect = self.avatar_sprite.shape[1] / float(self.avatar_sprite.shape[0])
-            target_w = max(16, int(target_h * aspect))
-
-            spr = cv2.resize(self.avatar_sprite, (target_w, target_h), interpolation=cv2.INTER_AREA)
-
-            # Feet stand at (cx, cy)
-            spr_x0 = cx - target_w // 2
-            spr_y0 = cy - target_h + 8
-            spr_x1 = spr_x0 + target_w
-            spr_y1 = spr_y0 + target_h
-
-            dest_x0 = max(self.room_x0, spr_x0)
-            dest_y0 = max(self.room_y0, spr_y0)
-            dest_x1 = min(rx1, spr_x1)
-            dest_y1 = min(ry1, spr_y1)
-
-            if dest_x1 > dest_x0 and dest_y1 > dest_y0:
-                src_x0 = dest_x0 - spr_x0
-                src_y0 = dest_y0 - spr_y0
-                src_x1 = src_x0 + (dest_x1 - dest_x0)
-                src_y1 = src_y0 + (dest_y1 - dest_y0)
-
-                spr_crop = spr[src_y0:src_y1, src_x0:src_x1]
-                spr_rgb = spr_crop[:, :, :3]
-                spr_alpha = spr_crop[:, :, 3].astype(float) / 255.0
-
-                if is_stationary:
-                    spr_rgb = spr_rgb.copy()
-                    spr_rgb[:, :, 0] = np.clip(spr_rgb[:, :, 0].astype(float) * 1.18, 0, 255).astype(np.uint8)
-
-                roi = canvas[dest_y0:dest_y1, dest_x0:dest_x1]
-                for c in range(3):
-                    roi[:, :, c] = (spr_rgb[:, :, c] * spr_alpha + roi[:, :, c] * (1.0 - spr_alpha)).astype(np.uint8)
-
-            # 3. Futuristic HUD Corner Reticle Brackets framing the human figure
-            bx0 = max(self.room_x0 + 2, spr_x0 - 6)
-            by0 = max(self.room_y0 + 2, spr_y0 - 4)
-            bx1 = min(rx1 - 2, spr_x1 + 6)
-            by1 = min(ry1 - 2, spr_y1 + 4)
-            b_col = COLOR_CYAN if is_stationary else (45, 205, 255)
-            blen = 9
-
-            # Corner lines
-            cv2.line(canvas, (bx0, by0), (bx0 + blen, by0), b_col, 2)
-            cv2.line(canvas, (bx0, by0), (bx0, by0 + blen), b_col, 2)
-            cv2.line(canvas, (bx1, by0), (bx1 - blen, by0), b_col, 2)
-            cv2.line(canvas, (bx1, by0), (bx1, by0 + blen), b_col, 2)
-            cv2.line(canvas, (bx0, by1), (bx0 + blen, by1), b_col, 2)
-            cv2.line(canvas, (bx0, by1), (bx0, by1 - blen), b_col, 2)
-            cv2.line(canvas, (bx1, by1), (bx1 - blen, by1), b_col, 2)
-            cv2.line(canvas, (bx1, by1), (bx1, by1 - blen), b_col, 2)
-
-            # 4. Floating Holographic Status Badge (Above the head)
-            tag_text = f"TARGET: ({norm_x:.2f}, {norm_y:.2f})" if not is_stationary else f"LOCKED: ({norm_x:.2f}, {norm_y:.2f})"
-            tag_y = max(self.room_y0 + 20, spr_y0 - 12)
-            (tw, th), _ = cv2.getTextSize(tag_text, cv2.FONT_HERSHEY_DUPLEX, 0.44, 1)
-            t_x0 = np.clip(cx - tw // 2 - 8, self.room_x0 + 4, rx1 - tw - 18)
-            t_x1 = t_x0 + tw + 16
-            t_y0 = tag_y - th - 6
-            t_y1 = tag_y + 4
-            cv2.rectangle(canvas, (t_x0, t_y0), (t_x1, t_y1), (18, 22, 32), -1)
-            cv2.rectangle(canvas, (t_x0, t_y0), (t_x1, t_y1), b_col, 1)
-            cv2.putText(canvas, tag_text, (t_x0 + 8, tag_y - 2),
-                        cv2.FONT_HERSHEY_DUPLEX, 0.44, TEXT_WHITE, 1, cv2.LINE_AA)
-        else:
-            self._draw_procedural_thermal_human(canvas, cx, cy, is_stationary)
-
-    def _draw_procedural_thermal_human(
-        self,
-        canvas: np.ndarray,
-        cx: int,
-        cy: int,
-        is_stationary: bool,
-    ) -> None:
-        col = COLOR_CYAN if is_stationary else (45, 185, 255)
-        # Head
-        cv2.circle(canvas, (cx, cy - 50), 9, col, -1, cv2.LINE_AA)
-        cv2.circle(canvas, (cx, cy - 50), 4, (255, 255, 255), -1, cv2.LINE_AA)
-        # Torso
-        cv2.line(canvas, (cx, cy - 41), (cx, cy - 20), col, 4, cv2.LINE_AA)
-        # Arms
-        cv2.line(canvas, (cx - 14, cy - 32), (cx + 14, cy - 32), col, 3, cv2.LINE_AA)
-        # Legs
-        cv2.line(canvas, (cx, cy - 20), (cx - 9, cy), col, 3, cv2.LINE_AA)
-        cv2.line(canvas, (cx, cy - 20), (cx + 9, cy), col, 3, cv2.LINE_AA)
-
 
     # -------------------------------------------------------------------------
     def render(
@@ -749,19 +612,32 @@ class TrackerUI:
                 col = (int(60 * alpha), int(190 * alpha), int(80 * alpha))
                 cv2.line(canvas, pts[i - 1], pts[i], col, 2, cv2.LINE_AA)
 
-        # Person Thermal Avatar (Stays visible and locked when stationary!)
+        # Person dot (Stays visible and locked when stationary!)
         if presence:
             pdx, pdy = self.to_px(x, y)
             if not is_stationary:
                 self.trail.append((pdx, pdy))
 
-            # Crosshairs on floor
+            dot_col = COLOR_CYAN if is_stationary else COLOR_GREEN
+            # Outer glow
+            for r, a in [(24, 0.18), (17, 0.28), (11, 0.55)]:
+                overlay = canvas.copy()
+                cv2.circle(overlay, (pdx, pdy), r, dot_col, -1)
+                cv2.addWeighted(overlay, a, canvas, 1 - a, 0, canvas)
+
+            cv2.circle(canvas, (pdx, pdy), 10, dot_col, 2, cv2.LINE_AA)
+            cv2.circle(canvas, (pdx, pdy), 5, dot_col, -1, cv2.LINE_AA)
+            cv2.circle(canvas, (pdx, pdy), 2, (255, 255, 255), -1)
+
+            # Crosshairs
             ch_col = (70, 110, 120) if is_stationary else (50, 100, 55)
             cv2.line(canvas, (self.room_x0, pdy), (rx1, pdy), ch_col, 1)
             cv2.line(canvas, (pdx, self.room_y0), (pdx, ry1), ch_col, 1)
 
-            # Draw authentic 3D Holographic Avatar with HUD tracking
-            self._draw_thermal_avatar(canvas, pdx, pdy, is_stationary, eng1.current_score, norm_x=x, norm_y=y)
+            # Coordinate label
+            tag = f"({x:.2f}, {y:.2f}) [STILL]" if is_stationary else f"({x:.2f}, {y:.2f})"
+            cv2.putText(canvas, tag, (pdx + 14, pdy - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.44, TEXT_WHITE, 1, cv2.LINE_AA)
 
         # Room label
         cv2.putText(canvas, "ROOM (top-down view)", (self.room_x0 + 2, self.room_y0 - 8),
@@ -973,7 +849,7 @@ def main() -> int:
     parser.add_argument("--port1", type=str, default="", help="Serial port of ESP32 #1 (Link 1 / horizontal)")
     parser.add_argument("--port2", type=str, default="", help="Serial port of ESP32 #2 (Link 2 / vertical)")
     parser.add_argument("--baud", type=int, default=921600, help="Serial baud rate")
-    parser.add_argument("--threshold", type=float, default=42.0, help="Presence detection threshold (0..100)")
+    parser.add_argument("--threshold", type=float, default=50.0, help="Presence detection threshold (0..100)")
     parser.add_argument("--no-gui", action="store_true", help="Console-only mode")
     parser.add_argument("--config", default="config.json", help="Path to config.json")
     parser.add_argument("--seconds", type=float, default=0.0, help="Auto-stop after N seconds (0=run forever)")
@@ -1113,7 +989,7 @@ def main() -> int:
                 else:
                     # Rapid low-latency Kalman tracking during movement
                     x_smooth, y_smooth = kalman.update(x_raw, y_raw)
-                    heatmap.deposit(x_smooth, y_smooth, strength=min(1.8, max(0.75, pres_score / 45.0)))
+                    heatmap.deposit(x_smooth, y_smooth, strength=min(1.6, pres_score / 55.0))
             else:
                 x_smooth, y_smooth = kalman.rest()
 
