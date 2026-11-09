@@ -99,6 +99,7 @@ class SingleLinkEngine:
         # Baseline calibration
         self.baseline_mean: Optional[np.ndarray] = None
         self.baseline_rssi: Optional[float] = None
+        self.baseline_var: Optional[float] = None
         self.calib_start: float = time.monotonic()
         self._calib_amps: List[np.ndarray] = []
         self._calib_rssis: List[float] = []
@@ -133,6 +134,7 @@ class SingleLinkEngine:
         """Reset baseline — keep the room quiet for 3 s after pressing C."""
         self.baseline_mean = None
         self.baseline_rssi = None
+        self.baseline_var = None
         self.calib_start = time.monotonic()
         self._calib_amps.clear()
         self._calib_rssis.clear()
@@ -208,6 +210,9 @@ class SingleLinkEngine:
                 amps_arr = np.asarray(self._calib_amps, dtype=np.float32)
                 self.baseline_mean = np.mean(amps_arr, axis=0)
                 self.baseline_rssi = float(np.mean(self._calib_rssis))
+                base_vars = np.var(amps_arr, axis=0)
+                base_mean = float(np.mean(self.baseline_mean)) + 1e-6
+                self.baseline_var = float(np.mean(base_vars)) / base_mean
             return 0.0
 
         # ── 2) Score (relative variance + RSSI drop) ──────────────────────────
@@ -229,50 +234,61 @@ class SingleLinkEngine:
             self._var_ema_slow = 0.18 * rel_var + 0.82 * self._var_ema_slow
         self.var_ema_diff = max(0.0, self._var_ema_fast - self._var_ema_slow)
 
-        rel_var_norm = rel_var / (rel_var + self.activity_scale)
+        # Subtract baseline noise so empty room drops cleanly to 0.0
+        base_noise = self.baseline_var if self.baseline_var is not None else 0.05
+        net_var = max(0.0, rel_var - (base_noise * 1.15))
+        rel_var_norm = net_var / (net_var + self.activity_scale)
 
-        rssi_drop = max(0.0, (self.baseline_rssi or 0.0) - rssi)
-        self.current_rssi_drop = rssi_drop
-        rssi_drop_norm = rssi_drop / (rssi_drop + 8.0) if rssi_drop > 0 else 0.0
+        raw_drop = max(0.0, (self.baseline_rssi or 0.0) - rssi)
+        net_drop = max(0.0, raw_drop - 1.5)
+        self.current_rssi_drop = raw_drop
+        rssi_drop_norm = net_drop / (net_drop + 7.0) if net_drop > 0 else 0.0
 
         instant_pct = float(np.clip(
-            ((rel_var_norm + 0.6 * rssi_drop_norm) / 1.6) * 100.0, 0.0, 100.0
+            ((rel_var_norm + 0.65 * rssi_drop_norm) / 1.65) * 100.0, 0.0, 100.0
         ))
 
-        alpha = 0.55 if instant_pct > self.current_score else 0.20
+        alpha = 0.50 if instant_pct > self.current_score else 0.18
         self.current_score = alpha * instant_pct + (1.0 - alpha) * self.current_score
         self._score_window.append(self.current_score)
 
-        # ── 3) Tripwire state machine ─────────────────────────────────────────
+        # ── 3) Tripwire state machine & People Counting ───────────────────────
         thresh = self.threshold
-        hysteresis_low = max(8.0, thresh - 12.0)
+        hysteresis_low = max(6.0, thresh - 14.0)
 
-        # BEAM ACTIVE
+        # BEAM ACTIVE (Person present / disturbance detected)
         if self.current_score >= thresh:
             if not self._in_crossing:
                 self._in_crossing = True
                 self._cross_start_t = now
                 self._cross_peak_score = self.current_score
-                self._cross_peak_drop = rssi_drop
-                self._cross_peak_ema_diff = self.var_ema_diff
+                self._cross_peak_drop = raw_drop
             else:
                 self._cross_peak_score = max(self._cross_peak_score, self.current_score)
-                self._cross_peak_drop = max(self._cross_peak_drop, rssi_drop)
-                self._cross_peak_ema_diff = max(self._cross_peak_ema_diff, self.var_ema_diff)
+                self._cross_peak_drop = max(self._cross_peak_drop, raw_drop)
 
-            elapsed_cross = now - self._cross_start_t
-            self.instant_people = self._estimate_instant(
-                self._cross_peak_score, self._cross_peak_drop, elapsed_cross
-            )
+            # Disturbance tiers: 1 person, 2 people, 3 people
+            if self.current_score >= 80.0:
+                self.instant_people = 3
+            elif self.current_score >= 58.0:
+                self.instant_people = 2
+            else:
+                self.instant_people = 1
 
-        # BEAM CLEAR
+        # BEAM CLEAR (Room empty / dropped below hysteresis floor)
         elif self.current_score < hysteresis_low:
             if self._in_crossing:
                 duration = now - self._cross_start_t
                 if duration >= 0.30 and not self.in_cooldown:
-                    count_added, kind = self._classify(
-                        duration, self._cross_peak_score, self._cross_peak_drop
-                    )
+                    count_added = 1
+                    kind = "1 Person"
+                    if self._cross_peak_score >= 80.0:
+                        count_added = 3
+                        kind = "3 People"
+                    elif self._cross_peak_score >= 58.0:
+                        count_added = 2
+                        kind = "2 People"
+
                     self.total_crossings += count_added
                     self.recent_events.append((
                         time.strftime("%H:%M:%S"), count_added, kind,
@@ -283,8 +299,9 @@ class SingleLinkEngine:
                 self._in_crossing = False
                 self._cross_peak_score = 0.0
                 self._cross_peak_drop = 0.0
-                self._cross_peak_ema_diff = 0.0
-                self.instant_people = 0
+
+            # Line drops to floor -> 0 Clear (Green)
+            self.instant_people = 0
 
         return self.current_score
 
@@ -426,7 +443,8 @@ class ScopeUI:
                         cv2.FONT_HERSHEY_DUPLEX, 0.62, COLOR_YELLOW, 1, cv2.LINE_AA)
         elif is_detected:
             # Person Detected - Glowing Red Badge
-            badge_text = f"[!] {engine.instant_people} PERSON DETECTED" if engine.instant_people == 1 else f"[!] {engine.instant_people} PEOPLE DETECTED!"
+            p_cnt = max(1, engine.instant_people)
+            badge_text = f"[!] {p_cnt} PERSON DETECTED" if p_cnt == 1 else f"[!] {p_cnt} PEOPLE DETECTED!"
             cv2.rectangle(canvas, (banner_x, banner_y), (banner_x + banner_w, banner_y + banner_h),
                           COLOR_RED_DARK, -1)
             cv2.rectangle(canvas, (banner_x, banner_y), (banner_x + banner_w, banner_y + banner_h),
@@ -562,8 +580,11 @@ class ScopeUI:
         elif engine.instant_people == 1:
             inst_text = "~1  Person"
             inst_col = COLOR_ORANGE
-        else:
+        elif engine.instant_people == 2:
             inst_text = "~2  People"
+            inst_col = COLOR_YELLOW
+        else:
+            inst_text = "~3  People!"
             inst_col = COLOR_RED
 
         cv2.putText(canvas, inst_text, (px + 14, card2_y + 58),
