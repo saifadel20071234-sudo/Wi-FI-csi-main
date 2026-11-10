@@ -33,7 +33,22 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "count_window_frames": 40,
         "count_model": "count_model.pkl",
         "count_scaler": "count_scaler.pkl",
+        "count_ml_override": False,
+        "count_ml_confidence_min": 0.60,
         "rti_link_width": 0.30,
+    },
+    "tracker": {
+        "threshold": 50.0,
+        "stationary_hold_sec": 10.0,
+        "static_shadow_db": 1.5,
+        "calibration_seconds": 3.0,
+        "smoothing_alpha": 0.35,
+        "max_step": 0.065,
+        "deadband": 0.016,
+        "heat_decay": 0.978,
+        "heat_intensity": 16.0,
+        "kalman_process_noise": 0.10,
+        "kalman_measurement_noise": 0.001,
     },
     "visual": {
         "window_name": "WiFi CSI Sensing",
@@ -63,7 +78,7 @@ def load_config(path: str) -> Dict[str, Any]:
             f"Config file not found: {path}\n"
             "Create it (see README.md) or pass --config <path>."
         )
-    with open(path, "r", encoding="utf-8") as fh:
+    with open(path, "r", encoding="utf-8-sig") as fh:
         user_cfg = json.load(fh)
     cfg = _deep_merge(DEFAULT_CONFIG, user_cfg)
 

@@ -103,19 +103,14 @@ class CSIReader:
             return self._frames[-1]
 
     # -- internals -------------------------------------------------------
-    def _run(self) -> None:
-        try:
-            import serial  # local import keeps the rest importable without it
-        except Exception as exc:  # pragma: no cover
-            self._error = f"pyserial not installed: {exc}"
-            self._running = False
-            return
+    def _open_serial(self):
+        """Open the port, retrying a few times. Returns a Serial or None."""
+        import serial
 
-        ser = None
         retries = 0
-        while not self._stop.is_set() and ser is None and retries < 8:
+        while not self._stop.is_set() and retries < 8:
             try:
-                ser = serial.Serial(
+                return serial.Serial(
                     port=self.port,
                     baudrate=self.baud,
                     bytesize=8,
@@ -125,20 +120,19 @@ class CSIReader:
                 )
             except Exception as exc:
                 retries += 1
-                self._error = f"waiting for {self.port} ({retries}/8)..."
+                self._error = f"waiting for {self.port} ({retries}/8): {exc}"
                 time.sleep(0.8)
+        self._error = f"cannot open {self.port} (Access Denied or Not Found)"
+        return None
 
-        if ser is None:
-            self._error = f"cannot open {self.port} (Access Denied or Not Found)"
-            self._running = False
-            return
-
+    def _read_loop(self, ser) -> None:
+        """Read/parse lines until stop is requested or the connection drops."""
         while not self._stop.is_set():
             try:
                 raw = ser.readline()
             except Exception as exc:
                 self._error = f"read error on {self.port}: {exc}"
-                break
+                return
             if not raw:
                 continue
             self._bytes_total += len(raw)
@@ -170,10 +164,34 @@ class CSIReader:
                 )
                 self._csv_file.flush()
 
+    def _run(self) -> None:
         try:
-            ser.close()
-        except Exception:
-            pass
+            import serial  # noqa: F401  (availability check)
+        except Exception as exc:  # pragma: no cover
+            self._error = f"pyserial not installed: {exc}"
+            self._running = False
+            return
+
+        # Outer loop: if a device is unplugged/replugged we reopen and resume.
+        while not self._stop.is_set():
+            ser = self._open_serial()
+            if ser is None:
+                break
+            self._error = None
+            try:
+                self._read_loop(ser)
+            finally:
+                try:
+                    ser.close()
+                except Exception:
+                    pass
+
+            if self._stop.is_set():
+                break
+            # Connection dropped: retry instead of dying silently.
+            self._error = f"connection lost on {self.port}; reconnecting..."
+            time.sleep(1.0)
+
         self._running = False
 
 
@@ -195,10 +213,17 @@ def parse_csi_line(line: str) -> Optional[Dict[str, Any]]:
     if bracket == -1 or rbracket == -1 or rbracket < bracket:
         return None
     header = line[:bracket].rstrip('", ')
+    payload_text = line[bracket : rbracket + 1]
     try:
-        payload = json.loads(line[bracket : rbracket + 1])
+        payload = json.loads(payload_text)
     except (json.JSONDecodeError, ValueError):
-        return None
+        # Some firmware builds print the CSI array space-separated
+        # (e.g. "[67 48 4 ...]") instead of JSON commas. Accept both.
+        inner = payload_text[1:-1].replace(",", " ")
+        try:
+            payload = [float(v) for v in inner.split() if v]
+        except ValueError:
+            return None
 
     fields = header.split(",")
     # Header ends with: ...,<len>,<first_word>

@@ -14,10 +14,9 @@
 #include "rom/ets_sys.h"
 
 // -----------------------------------------------------------------------------
-// WiFi Credentials for Access Point #2 (S24 Ultra saif_EXT)
+// WiFi Credentials: kept out of the repo in secrets.h (see secrets.h.example)
 // -----------------------------------------------------------------------------
-const char* PRIMARY_SSID = "S24 Ultra saif_EXT";
-const char* PRIMARY_PASS = "123456789ss";
+#include "secrets.h"
 
 // 25 Hz: optimal motion capture
 #define CONFIG_SEND_FREQUENCY 25
@@ -51,7 +50,7 @@ static void wifi_csi_rx_cb(void *ctx, wifi_csi_info_t *info) {
                rx->timestamp, rx->ant, rx->sig_len, rx->sig_mode, info->len, info->first_word_invalid);
 
     for (int i = 0; i < info->len; i++) {
-        ets_printf("%d%s", (int8_t)info->buf[i], (i == info->len - 1) ? "" : " ");
+        ets_printf("%d%s", (int8_t)info->buf[i], (i < info->len - 1) ? "," : "");
     }
     ets_printf("]\"\n");
 }

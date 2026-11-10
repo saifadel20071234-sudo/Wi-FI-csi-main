@@ -8,12 +8,17 @@ The labeled CSV header must be:  count,<feature...>  where the feature columns a
 exactly those produced by count_model.feature_names(devices) for the SAME device
 list (use collect_count_data.py to build it).
 
+Legacy CSVs whose feature columns were recorded under different device names
+(e.g. left_*/right_* instead of esp32_h_*/esp32_v_*) are accepted as long as the
+column count matches: the columns are then mapped by position with a warning.
+
 Outputs (next to this script): count_model.pkl, count_scaler.pkl,
 count_feature_names.pkl.
 """
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 
 sys.path.insert(0, "src")
@@ -66,6 +71,16 @@ def main(argv=None):
     p.add_argument("--csv", default=None)
     p.add_argument("--n-estimators", type=int, default=400)
     p.add_argument("--seed", type=int, default=42)
+    p.add_argument(
+        "--force",
+        action="store_true",
+        help="save the model even if the data contains a single label (not recommended)",
+    )
+    p.add_argument(
+        "--out-dir",
+        default=".",
+        help="directory to write the model files into (default: current directory)",
+    )
     args = p.parse_args(argv)
 
     cfg = load_config(args.config)
@@ -76,10 +91,24 @@ def main(argv=None):
 
     if args.csv:
         df = pd.read_csv(args.csv)
+        if "count" not in df.columns:
+            print("ERROR: CSV must have a 'count' label column.")
+            return 1
         missing = [c for c in names if c not in df.columns]
         if missing:
-            print(f"ERROR: CSV missing feature columns: {missing}")
-            return 1
+            csv_feats = [c for c in df.columns if c != "count"]
+            if len(csv_feats) == len(names):
+                print("WARNING: CSV feature names differ from config; mapping by column order:")
+                for old, new in zip(csv_feats, names):
+                    print(f"  {old} -> {new}")
+                df = df.rename(columns=dict(zip(csv_feats, names)))
+            else:
+                print(f"ERROR: CSV missing feature columns: {missing}")
+                print(
+                    f"       CSV has {len(csv_feats)} feature columns, "
+                    f"expected {len(names)} for devices {[d['id'] for d in devices]}."
+                )
+                return 1
     else:
         names, rows = synthetic_rows(devices)
         df = pd.DataFrame(rows, columns=["count"] + names)
@@ -88,6 +117,20 @@ def main(argv=None):
     X = df[names].astype(float)
     y = df["count"].astype(int)
     print(f"Rows: {len(df)} | label distribution:\n{df['count'].value_counts().sort_index()}")
+
+    # A single-class dataset can only ever predict that one class, so refuse to
+    # silently overwrite a working model with it.
+    if y.nunique() < 2 and not args.force:
+        print(
+            f"\nERROR: all {len(y)} rows have the same label ({int(y.iloc[0])}). "
+            "The trained model would always predict that class and be useless."
+        )
+        print(
+            "       Collect data for several counts (e.g. --count 0, 1, 2) and retrain, "
+            "or pass --force to save anyway."
+        )
+        print("       Existing model files were NOT modified.")
+        return 1
 
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=0.2, random_state=args.seed, stratify=y
@@ -107,10 +150,14 @@ def main(argv=None):
     print("\nClassification report:")
     print(classification_report(y_test, y_pred, zero_division=0))
 
-    joblib.dump(model, "count_model.pkl")
-    joblib.dump(scaler, "count_scaler.pkl")
-    joblib.dump(names, "count_feature_names.pkl")
-    print("\nSaved: count_model.pkl, count_scaler.pkl, count_feature_names.pkl")
+    os.makedirs(args.out_dir, exist_ok=True)
+    joblib.dump(model, os.path.join(args.out_dir, "count_model.pkl"))
+    joblib.dump(scaler, os.path.join(args.out_dir, "count_scaler.pkl"))
+    joblib.dump(names, os.path.join(args.out_dir, "count_feature_names.pkl"))
+    print(
+        f"\nSaved to {os.path.abspath(args.out_dir)}: "
+        "count_model.pkl, count_scaler.pkl, count_feature_names.pkl"
+    )
     return 0
 
 

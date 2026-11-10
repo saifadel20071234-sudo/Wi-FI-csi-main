@@ -11,6 +11,7 @@ the system still runs without ML.
 from __future__ import annotations
 
 import os
+import warnings
 from collections import deque
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -104,9 +105,44 @@ class CountPredictor:
         if self.model is None:
             return None, 0.0
         try:
-            X = self.scaler.transform([feature_vector])
-            pred = int(self.model.predict(X)[0])
-            proba = float(np.max(self.model.predict_proba(X)[0]))
+            feat = [float(v) for v in feature_vector]
+
+            # The saved sklearn objects were fitted with named columns, so feed
+            # them a DataFrame when pandas is available to avoid noisy warnings.
+            try:
+                import pandas as pd
+            except Exception:
+                pd = None
+
+            if pd is not None:
+                scaler_names = getattr(self.scaler, "feature_names_in_", None)
+                x_in = (
+                    pd.DataFrame([feat], columns=list(scaler_names))
+                    if scaler_names is not None
+                    else [feat]
+                )
+                x_scaled = self.scaler.transform(x_in)
+                model_names = getattr(self.model, "feature_names_in_", None)
+                x_pred = (
+                    pd.DataFrame(x_scaled, columns=list(model_names))
+                    if model_names is not None
+                    else x_scaled
+                )
+            else:
+                # No pandas: sklearn will warn about missing feature names.
+                # The values are in the exact fitted order, so it is harmless.
+                with warnings.catch_warnings():
+                    warnings.filterwarnings(
+                        "ignore", message="X does not have valid feature names"
+                    )
+                    x_pred = self.scaler.transform([feat])
+
+            with warnings.catch_warnings():
+                warnings.filterwarnings(
+                    "ignore", message="X does not have valid feature names"
+                )
+                pred = int(self.model.predict(x_pred)[0])
+                proba = float(np.max(self.model.predict_proba(x_pred)[0]))
             return pred, proba
         except Exception:
             return None, 0.0

@@ -1,0 +1,17 @@
+# Normalise text files, but never let Git treat binaries as text.
+* text=auto
+
+# Windows launchers must keep CRLF
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Binary artefacts
+*.pkl binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.mp4 binary
+*.pdf binary
+*.zip binary
+*.csv text

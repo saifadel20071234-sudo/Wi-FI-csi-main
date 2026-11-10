@@ -90,6 +90,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 1
 
     proc_cfg = cfg.get("processing", {})
+    ml_override = bool(proc_cfg.get("count_ml_override", False))
+    ml_conf_min = float(proc_cfg.get("count_ml_confidence_min", 0.6))
 
     if args.demo:
         from simulator import SimulatorSource
@@ -217,7 +219,9 @@ def main(argv: Optional[List[str]] = None) -> int:
                 state["blobs"] = []
                 state["blob_count"] = state.get("count", 0) if state["presence"] else 0
 
-            # ML count (overrides the blob/heuristic count when a model exists).
+            # ML count is an auxiliary estimate. The geometric blob count stays
+            # authoritative unless count_ml_override is enabled AND the model is
+            # confident enough (the shipped model was trained on one-person data).
             count_fe.push(state)
             state["ml_count"] = None
             state["ml_confidence"] = 0.0
@@ -228,10 +232,17 @@ def main(argv: Optional[List[str]] = None) -> int:
                 state["ml_confidence"] = ml_conf
 
             # Final people count shown to the user.
-            if state["ml_count"] is not None:
-                state["people"] = state["ml_count"]
+            blob_count = state.get("blob_count", 0)
+            ml_count = state.get("ml_count")
+            ml_conf = state.get("ml_confidence", 0.0)
+            if (
+                ml_override
+                and ml_count is not None
+                and ml_conf >= ml_conf_min
+            ):
+                state["people"] = ml_count
             else:
-                state["people"] = state["blob_count"]
+                state["people"] = blob_count
 
             if visualizer is not None:
                 key = visualizer.render(state, frames, heat_bgr)

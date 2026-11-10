@@ -15,14 +15,9 @@
 #include "rom/ets_sys.h"
 
 // -----------------------------------------------------------------------------
-// WiFi Credentials (Supports Hotspot or Access Point)
+// WiFi Credentials: kept out of the repo in secrets.h (see secrets.h.example)
 // -----------------------------------------------------------------------------
-const char* PRIMARY_SSID = "S24 Ultra saif";
-const char* PRIMARY_PASS = "123456789ss";
-
-// Optional secondary Access Point (if user configures an AP)
-const char* BACKUP_SSID  = "CSI_AP";
-const char* BACKUP_PASS  = "123456789";
+#include "secrets.h"
 
 // 25 Hz is the sweet spot: fast motion capture, zero rate-limit drops
 #define CONFIG_SEND_FREQUENCY 25

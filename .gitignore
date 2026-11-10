@@ -30,3 +30,6 @@ csii/
 # Local scratch and videos
 scratch/
 *.mp4
+
+# Firmware WiFi credentials (copy secrets.h.example to secrets.h)
+secrets.h

@@ -96,32 +96,32 @@
 
 ### 2) حساب التشتت النسبي للموجات (Relative Subcarrier Variance)
 أثناء أول 3 ثواني، والغرفة خالية، البرنامج بيسجل المتوسط المرجعي للموجات $\bar{\mu}_{base}$.
-وعند التشغيل، بيتم حساب التباين لكل موجة فرعية في نافذة زمنية $W = 20$ إطار:
+وعند التشغيل، بيتم حساب التباين لكل موجة فرعية في نافذة زمنية $W = 12$ إطار:
 $$\text{Var}_{sc} = \frac{1}{W} \sum_{t=1}^{W} \left( A_{sc}(t) - \bar{A}_{sc} \right)^2$$
 ثم حساب التشتت النسبي الإجمالي:
 $$\text{RelVar} = \frac{\frac{1}{64} \sum_{sc=0}^{63} \text{Var}_{sc}}{\bar{\mu}_{base}}$$
 
 ### 3) كاشف الاندفاع الحركي المزدوج (Dual-EMA Surge Detector)
 عشان نفرق بين الحركة الحقيقية للإنسان والضوضاء الثابتة، استخدمنا كاشفين للمتوسط المتحرك الأسي (Exponential Moving Average):
-$$\text{EMA}_{fast} = 0.50 \cdot \text{RelVar} + 0.50 \cdot \text{EMA}_{fast} \quad (\text{استجابة سريعة جداً - 3 إطارات})$$
-$$\text{EMA}_{slow} = 0.18 \cdot \text{RelVar} + 0.82 \cdot \text{EMA}_{slow} \quad (\text{استجابة بطيئة - 10 إطارات})$$
+$$\text{EMA}_{fast} = 0.55 \cdot \text{RelVar} + 0.45 \cdot \text{EMA}_{fast} \quad (\text{استجابة سريعة جداً - 3 إطارات})$$
+$$\text{EMA}_{slow} = 0.20 \cdot \text{RelVar} + 0.80 \cdot \text{EMA}_{slow} \quad (\text{استجابة بطيئة - 10 إطارات})$$
 $$\Delta\text{EMA} = \max(0, \text{EMA}_{fast} - \text{EMA}_{slow})$$
 لو $\Delta\text{EMA}$ ارتفعت فجأة، ده دليل قاطع على دخول شخص أو تحركه.
 
 ### 4) دمج هبوط الطاقة (RSSI Drop Integration)
 $$\Delta\text{RSSI} = \max(0, \text{RSSI}_{base} - \text{RSSI}_{current})$$
-$$\text{Drop}_{norm} = \frac{\Delta\text{RSSI}}{\Delta\text{RSSI} + 8.0}$$
-حيث $8.0\text{ dB}$ هو معامل التشبع لامتصاص جسم الإنسان للموجات.
+$$\text{Drop}_{norm} = \frac{\Delta\text{RSSI}}{\Delta\text{RSSI} + 7.0}$$
+حيث $7.0\text{ dB}$ هو معامل التشبع لامتصاص جسم الإنسان للموجات.
 
 ### 5) حساب مؤشر النشاط العام (Instant Activity Score)
-$$\text{InstantPct} = \text{clip}\left( \frac{\text{RelVar}_{norm} + 0.6 \cdot \text{Drop}_{norm}}{1.6} \times 100, \quad 0, \quad 100 \right)$$
+$$\text{InstantPct} = \text{clip}\left( \frac{\text{RelVar}_{norm} + 0.65 \cdot \text{Drop}_{norm}}{1.65} \times 100, \quad 0, \quad 100 \right)$$
 
 ### 6) التنعيم غير المتماثل (Asymmetric Attack / Decay Filtering)
 للقضاء على الرمش والتقطيع في الشاشة:
 $$\text{Score}_t = \alpha \cdot \text{InstantPct} + (1 - \alpha) \cdot \text{Score}_{t-1}$$
 حيث:
-* $\alpha = 0.55$ (Fast Attack): عند بدء الحركة يستجيب النظام فوراً بدون أي لاج.
-* $\alpha = 0.20$ (Smooth Decay): عند توقف الحركة يهدأ المؤشر بنعومة وتدريجياً.
+* $\alpha = 0.85$ (Fast Attack): عند بدء الحركة يستجيب النظام فوراً بدون أي لاج.
+* $\alpha = 0.38$ (Smooth Decay): عند توقف الحركة يهدأ المؤشر بنعومة وتدريجياً.
 
 ---
 
@@ -140,13 +140,13 @@ $$\mathbf{x} = \begin{bmatrix} x \\ y \\ v_x \\ v_y \end{bmatrix}$$
 * **مصفوفة الانتقال (State Transition Matrix $\mathbf{F}$):**
 $$\mathbf{F} = \begin{bmatrix} 1 & 0 & \Delta t & 0 \\ 0 & 1 & 0 & \Delta t \\ 0 & 0 & 1 & 0 \\ 0 & 0 & 0 & 1 \end{bmatrix}$$
 * **معاملات الضوضاء المضبوطة بدقة:**
-  * ضوضاء العملية (Process Noise $Q$): $1.0 \times 10^{-3}$ (افتراض حركة مشي بشرية ناعمة).
-  * ضوضاء القياس (Measurement Noise $R$): $1.5 \times 10^{-2}$ (تصفية تذبذبات الواي فاي العشوائية).
+  * ضوضاء العملية (Process Noise $Q$): $0.10$ (افتراض حركة مشي بشرية ناعمة).
+  * ضوضاء القياس (Measurement Noise $R$): $1.0 \times 10^{-3}$ (تصفية تذبذبات الواي فاي العشوائية).
 
 ### 3) رسم الخريطة الحرارية (Heatmap Gaussian Deposition)
 عند كل موضع يحدده فلتر كالمان $(x, y)$، يتم إسقاط دالة جاوس ثنائية الأبعاد على مصفوفة الهيت ماب:
 $$H(i, j) += I \cdot \exp\left( -\frac{(i - x)^2 + (j - y)^2}{2\sigma^2} \right)$$
-حيث $\sigma = 8\text{ pixels}$، مع تطبيق معامل اضمحلال زمني مستمر (Decay Rate = $0.978$) ليتلاشى الأثر الحراري خلف الشخص أثناء سيره كأثر الأقدام.
+حيث $\sigma = 5\text{ pixels}$، مع تطبيق معامل اضمحلال زمني مستمر (Decay Rate = $0.978$) ليتلاشى الأثر الحراري خلف الشخص أثناء سيره كأثر الأقدام.
 
 ---
 
@@ -170,7 +170,7 @@ $$H(i, j) += I \cdot \exp\left( -\frac{(i - x)^2 + (j - y)^2}{2\sigma^2} \right)
 * `total_act_mean`: المجموع التراكمي للطاقة الحركية عبر جميع الأجهزة.
 
 ### 3) نتائج الأداء (Evaluation Metrics)
-* **Best Within-Recording MAE:** حوالي **0.72 شخص** باستخدام Random Forest مع الخصائص المدمجة (Combined Features).
+* **Best Within-Recording MAE:** حوالي **0.72 شخص** باستخدام Random Forest مع الخصائص المدمجة (Combined Features) — لكن **التقييم عبر تسجيلات مختلفة (Cross-Recording) فشل**، والرقم ده يصلح فقط داخل نفس التسجيل ولا يُعتمد كدقة تشغيل عامة.
 * **الملفات المحفوظة في المشروع:**
   * `count_model.pkl`: النموذج المدرب مسبقاً.
   * `count_scaler.pkl`: أوزان التطبيع الإحصائي `StandardScaler`.
@@ -185,12 +185,12 @@ $$H(i, j) += I \cdot \exp\left( -\frac{(i - x)^2 + (j - y)^2}{2\sigma^2} \right)
 | **Serial Baud Rate** | `921600` | أقصى سرعة نقل مستقرة لنقل 64 قيمة CSI بتردد 25 Hz بدون تأخير |
 | **Stream Sampling Rate** | `25 Hz` (40 ms) | التردد الذهبي لرصد مشي الإنسان وتجنب عنق الزجاجة للذاكرة |
 | **Calibration Duration** | `3.0 - 4.0 Seconds` | وقت بناء البصمة المرجعية للغرفة الفارغة (Baseline Mean & RSSI) |
-| **Detection Threshold** | `38.0 %` (قابل للتعديل) | الحد الأدنى لفصل ضوضاء الخلفية عن بدء حركة الإنسان |
+| **Detection Threshold** | `50.0 %` (قابل للتعديل) | الحد الأدنى لفصل ضوضاء الخلفية عن بدء حركة الإنسان |
 | **Hysteresis Low** | `Threshold - 12.0 %` | منع الرعشة والتذبذب السريع عند أطراف الإشارة |
-| **Tripwire Cooldown** | `2.5 Seconds` | منع تسجيل الشخص الواحد عدة مرات متتالية أثناء عبوره |
+| **Tripwire Cooldown** | `0.6 Seconds` | منع تسجيل الشخص الواحد عدة مرات متتالية أثناء عبوره |
 | **Activity Scale** | `0.15` | معامل موازنة الحساسية في معادلة التطبيع غير الخطي |
-| **Kalman Process Noise ($Q$)** | `1e-3` | معامل مرونة فلتر كالمان لتتبع سرعة المشي |
-| **Kalman Measurement Noise ($R$)** | `1.5e-2` | معامل فلترة ضوضاء وانعكاسات الجدران |
+| **Kalman Process Noise ($Q$)** | `0.10` | معامل مرونة فلتر كالمان لتتبع سرعة المشي |
+| **Kalman Measurement Noise ($R$)** | `1e-3` | معامل فلترة ضوضاء وانعكاسات الجدران |
 | **Heatmap Decay Rate** | `0.978` | معدل تلاشي المسار الحراري خلف الشخص المتحرك |
 
 ---
@@ -202,7 +202,7 @@ $$H(i, j) += I \cdot \exp\left( -\frac{(i - x)^2 + (j - y)^2}{2\sigma^2} \right)
 | **عدد أجهزة ESP32** | 1× ESP32 + هوتسبوت الموبايل | 2× ESP32 + راوترين / نقاط وصول |
 | **نوع التغطية** | 1D Corridor (خط مستقيم تقريبي) | **True 2D Full Grid** (طول وعرض الغرفة بالكامل) |
 | **تحديد موضع النقطة** | تقريب رياضي مبني على شدة الحجب | **تقاطع هندسي دقيق** لمحورين متعامدين (X, Y) |
-| **النقط الميتة (Blind Spots)** | توجد نقط ميتة في أطراف الغرفة البعيدة | **منعدمة تماماً (Zero Blind Spots)**؛ تغطية متقاطعة |
+| **النقط الميتة (Blind Spots)** | توجد نقط ميتة في أطراف الغرفة البعيدة | تغطية متقاطعة أفضل بكثير، لكن **ليست منعدمة تماماً** (تبقى مناطق ضعف عند الأطراف) |
 | **استقرار الإشارة** | هوتسبوت الموبايل يتأثر بوضع توفير الطاقة | الراوترات الثابتة توفر إشارة بث نقية ومستقرة 24/7 |
 | **دقة عداد الأشخاص** | ممتازة لشخص واحد، وتحديد تقريبي لشخصين | دقة فائقة في فصل إشارات عدة أشخاص في نفس اللحظة |
 

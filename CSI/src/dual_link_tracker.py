@@ -268,16 +268,27 @@ class DualLinkFusion:
 
     Supports:
       • Instant, lag-free glide across the full room canvas (< 25 ms latency)
-      • Stationary Person Lock: when motionless/still, target does NOT disappear
+      • Stationary hold: when motion stops, the target is kept for a bounded
+        grace window (longer while a body shadow is present) and then clears
       • Static body absorption detection from steady RF shadowing
     """
 
     BEAM1_Y = 0.35
     BEAM2_X = 0.65
 
-    def __init__(self, smooth_alpha: float = 0.35, stationary_hold_sec: float = 3600.0) -> None:
+    def __init__(
+        self,
+        smooth_alpha: float = 0.35,
+        stationary_hold_sec: float = 10.0,
+        static_shadow_db: float = 1.5,
+        max_step: float = 0.065,
+        deadband: float = 0.016,
+    ) -> None:
         self.smooth_alpha = smooth_alpha
-        self.stationary_hold_sec = stationary_hold_sec
+        self.stationary_hold_sec = float(stationary_hold_sec)
+        self.static_shadow_db = float(static_shadow_db)
+        self.max_step = float(max_step)
+        self.deadband = float(deadband)
         self._x: float = 0.50
         self._y: float = 0.50
         self.last_valid_x: float = 0.50
@@ -304,8 +315,9 @@ class DualLinkFusion:
         active_motion = motion1 or motion2
 
         max_drop = max(rssi_drop1, rssi_drop2 if has_link2 else 0.0)
-        # Static body presence: human body absorbs RF beam even when motionless
-        static_shadow = max_drop >= 1.3
+        # A human body absorbs the RF beam even while standing still, so a
+        # sustained RSSI drop extends presence -- but it can never create it.
+        static_shadow = max_drop >= self.static_shadow_db
 
         if active_motion:
             self.has_detected = True
@@ -313,17 +325,24 @@ class DualLinkFusion:
             self.is_stationary = False
             presence = True
         elif self.has_detected:
-            # Person stopped moving but is still present in the room:
-            # Firmly lock position onto last coordinates so the point NEVER disappears!
-            self.is_stationary = True
-            presence = True
+            # Grace window after the last motion. A body shadow doubles it
+            # (person sitting still) but presence is NEVER permanent: once the
+            # room is empty and the window expires, it clears back to NO.
+            hold = self.stationary_hold_sec * (2.0 if static_shadow else 1.0)
+            if (now - self.last_motion_t) <= hold:
+                self.is_stationary = True
+                presence = True
+            else:
+                # Room is truly empty again.
+                self.has_detected = False
+                self.is_stationary = False
+                presence = False
         else:
             self.is_stationary = False
             presence = False
 
         presence_score = max(score1, score2 if has_link2 else 0.0)
-        if self.is_stationary:
-            presence_score = max(presence_score, thresh + 5.0)
+        self._presence_score = presence_score
 
         # Room truly empty: gently return to center
         if not presence:
@@ -364,7 +383,7 @@ class DualLinkFusion:
         target_y = float(np.clip(target_y, 0.08, 0.92))
 
         # Velocity clamping: eliminate sudden teleportation jumps (تغيرات مفاجأة)
-        max_step = 0.065  # Max normalized step per frame (~1.6 m/s at 25 Hz)
+        max_step = self.max_step  # Max normalized step per frame (~1.6 m/s at 25 Hz)
         dx = target_x - self._x
         dy = target_y - self._y
         step_dist = math.hypot(dx, dy)
@@ -374,7 +393,7 @@ class DualLinkFusion:
             step_dist = max_step
 
         # Deadband & adaptive smoothing (eliminate micro-jitter when standing)
-        if step_dist < 0.016:
+        if step_dist < self.deadband:
             # Squelch small jitter when standing or micro-moving
             pass
         else:
@@ -581,7 +600,7 @@ class TrackerUI:
             if is_stationary:
                 cv2.rectangle(canvas, (bx, by), (bx + bw, by + bh), (35, 45, 20), -1)
                 cv2.rectangle(canvas, (bx, by), (bx + bw, by + bh), COLOR_CYAN, 2)
-                cv2.putText(canvas, "[!] PERSON STILL (LOCKED)", (bx + 14, by + 32),
+                cv2.putText(canvas, "[!] PERSON STILL (HOLD)", (bx + 14, by + 32),
                             cv2.FONT_HERSHEY_DUPLEX, 0.66, COLOR_CYAN, 2, cv2.LINE_AA)
                 cv2.circle(canvas, (bx + bw - 22, by + 24), 9, COLOR_CYAN, -1)
             else:
@@ -820,7 +839,7 @@ class DualLinkDemoSource:
         self.base_amp = 36.0 + 8.0 * np.sin(x * 6.28) + 4.0 * np.cos(x * 12.56)
 
         # Movement path: (x_target, y_target, start_t, end_t)
-        # Person walks in a figure-8 pattern over 40 seconds
+        # Person walks a loop for 33s, then the room is empty for 12s.
         self._path = [
             (0.2, 0.5, 4,  9),    # Walk left-center
             (0.5, 0.2, 10, 15),   # Walk to top-center
@@ -828,7 +847,7 @@ class DualLinkDemoSource:
             (0.5, 0.8, 22, 27),   # Walk to bottom-center
             (0.2, 0.5, 28, 33),   # Back to left-center
         ]
-        self.cycle = 36.0
+        self.cycle = 45.0  # 33s of movement + 12s empty room (tests presence clearing)
 
     def _person_pos(self, t: float) -> Tuple[float, float]:
         """Smooth interpolated person position at time t."""
@@ -908,13 +927,38 @@ def main() -> int:
     parser.add_argument("--port1", type=str, default="", help="Serial port of ESP32 #1 (Link 1 / horizontal)")
     parser.add_argument("--port2", type=str, default="", help="Serial port of ESP32 #2 (Link 2 / vertical)")
     parser.add_argument("--baud", type=int, default=921600, help="Serial baud rate")
-    parser.add_argument("--threshold", type=float, default=50.0, help="Presence detection threshold (0..100)")
+    parser.add_argument("--threshold", type=float, default=None, help="Presence detection threshold (0..100)")
+    parser.add_argument("--hold", type=float, default=None, help="Seconds presence is kept after motion stops")
+    parser.add_argument("--shadow", type=float, default=None, help="RSSI drop (dB) treated as a static body shadow")
     parser.add_argument("--no-gui", action="store_true", help="Console-only mode")
     parser.add_argument("--config", default="config.json", help="Path to config.json")
     parser.add_argument("--seconds", type=float, default=0.0, help="Auto-stop after N seconds (0=run forever)")
     args = parser.parse_args()
 
-    threshold = args.threshold
+    # Load tuning from config.json; CLI flags always win.
+    cfg: Dict[str, Any] = {}
+    try:
+        cfg = load_config(args.config)
+    except Exception:
+        cfg = {}
+    tracker_cfg = cfg.get("tracker", {}) if isinstance(cfg, dict) else {}
+
+    threshold = (
+        args.threshold
+        if args.threshold is not None
+        else float(tracker_cfg.get("threshold", 50.0))
+    )
+    hold_sec = (
+        args.hold
+        if args.hold is not None
+        else float(tracker_cfg.get("stationary_hold_sec", 10.0))
+    )
+    shadow_db = (
+        args.shadow
+        if args.shadow is not None
+        else float(tracker_cfg.get("static_shadow_db", 1.5))
+    )
+    calib_sec = float(tracker_cfg.get("calibration_seconds", 3.0))
 
     # --- Setup data sources ---
     demo_source: Optional[DualLinkDemoSource] = None
@@ -934,7 +978,6 @@ def main() -> int:
         # Try config.json if ports not provided
         if not port1 or not port2:
             try:
-                cfg = load_config(args.config)
                 devs = cfg.get("devices", [])
                 if len(devs) >= 1 and not port1:
                     port1 = devs[0].get("port", "").strip()
@@ -978,18 +1021,37 @@ def main() -> int:
             print("[WARNING] Only 1 ESP32 found — running in single-link mode (1D position only)")
 
     # --- Initialize engines ---
-    eng1 = LinkEngine("link1", threshold=threshold)
-    eng2 = LinkEngine("link2", threshold=threshold)
-    fusion = DualLinkFusion(smooth_alpha=0.35)
-    kalman = KalmanTracker(process_noise=0.10, measurement_noise=1e-3)
-    heatmap = HeatmapEngine(grid_w=100, grid_h=80, decay=0.978, blob_sigma_px=5, intensity=16.0)
+    eng1 = LinkEngine("link1", calibration_seconds=calib_sec, threshold=threshold)
+    eng2 = LinkEngine("link2", calibration_seconds=calib_sec, threshold=threshold)
+    fusion = DualLinkFusion(
+        smooth_alpha=float(tracker_cfg.get("smoothing_alpha", 0.35)),
+        stationary_hold_sec=hold_sec,
+        static_shadow_db=shadow_db,
+        max_step=float(tracker_cfg.get("max_step", 0.065)),
+        deadband=float(tracker_cfg.get("deadband", 0.016)),
+    )
+    kalman = KalmanTracker(
+        process_noise=float(tracker_cfg.get("kalman_process_noise", 0.10)),
+        measurement_noise=float(tracker_cfg.get("kalman_measurement_noise", 1e-3)),
+    )
+    heatmap = HeatmapEngine(
+        grid_w=100,
+        grid_h=80,
+        decay=float(tracker_cfg.get("heat_decay", 0.978)),
+        blob_sigma_px=5,
+        intensity=float(tracker_cfg.get("heat_intensity", 16.0)),
+    )
 
     # --- Setup UI ---
     ui: Optional[TrackerUI] = None
     if not args.no_gui:
         ui = TrackerUI(title=f"WiFi CSI 2D Tracker — [{port1_label} | {port2_label}]")
     else:
-        print(f">> Console mode. Threshold: {threshold}%. Press Ctrl+C to quit.\n")
+        print(
+            f">> Console mode. Threshold: {threshold}% | "
+            f"Hold: {hold_sec:.1f}s | Shadow: {shadow_db:.1f}dB. "
+            "Press Ctrl+C to quit.\n"
+        )
 
     has_link2 = (demo_source is not None) or (reader2 is not None)
     last_seq1 = last_seq2 = -1
@@ -1028,7 +1090,7 @@ def main() -> int:
             else:
                 has_link2 = (reader2 is not None and reader2.is_running and eng2.online and not eng2.calibrating)
 
-            # Fuse into 2D position across the entire room canvas with stationary lock
+            # Fuse into 2D position across the entire room canvas
             x_raw, y_raw, pres_score, presence, is_stationary = fusion.fuse(
                 eng1.current_score,
                 eng2.current_score,
@@ -1042,7 +1104,8 @@ def main() -> int:
             # Kalman smoothing & stationary heatmap maintenance
             if presence:
                 if is_stationary:
-                    # When stationary/still: lock position, keep heatmap deposit active so it never disappears!
+                    # Stationary hold: keep the last position and refresh the
+                    # heatmap so the dot stays visible during the grace window.
                     x_smooth, y_smooth = x_raw, y_raw
                     heatmap.deposit(x_smooth, y_smooth, strength=0.95)
                 else:
