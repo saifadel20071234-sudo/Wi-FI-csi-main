@@ -9,7 +9,7 @@
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Status](https://img.shields.io/badge/Status-Active-brightgreen)](#-roadmap)
 
-> **بالعربي:** نظام كشف وتتبّع الأشخاص بدون كاميرا باستخدام إشارات الواي فاي (CSI) عبر جهازَي ESP32، مع خريطة حرارية 2D وعدّاد أشخاص. الدليل العربي الكامل في [`CSI/README.md`](CSI/README.md)، والشرح التقني المفصّل في [`PRESENTATION_DOCUMENTATION.md`](PRESENTATION_DOCUMENTATION.md).
+> **بالعربي:** نظام كشف وتتبّع الأشخاص بدون كاميرا باستخدام إشارات الواي فاي (CSI) عبر جهازَي ESP32، مع خريطة حرارية 2D وعدّاد أشخاص. الدليل العربي الكامل في [`README.ar.md`](README.ar.md)، ودليل مجلد CSI في [`CSI/README.md`](CSI/README.md)، والشرح التقني المفصّل في [`PRESENTATION_DOCUMENTATION.md`](PRESENTATION_DOCUMENTATION.md).
 
 ![2D Heatmap Tracker — live UI preview](CSI/assets/tracker_preview.png)
 
